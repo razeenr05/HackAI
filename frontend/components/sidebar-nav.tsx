@@ -12,6 +12,7 @@ import {
   Lightbulb,
   PlayCircle,
   Brain,
+  Sparkles,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,11 @@ const navItems = [
     title: "Dashboard",
     href: "/",
     icon: LayoutDashboard,
+  },
+  {
+    title: "Learn",
+    href: "/learn",
+    icon: Sparkles,
   },
   {
     title: "Skill Assessment",
