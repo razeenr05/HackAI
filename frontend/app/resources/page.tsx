@@ -1,272 +1,107 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { ResourceCard } from "@/components/cards/resource-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Search,
-  Filter,
-  Play,
-  FileText,
-  GraduationCap,
-  Code,
-  Sparkles,
-  BookOpen,
-  Star,
+  Search, Filter, Play, FileText, GraduationCap,
+  Code, Sparkles, BookOpen, Star,
 } from "lucide-react"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
+  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem,
+  DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu"
 
-const resources = [
-  {
-    id: "1",
-    title: "Recursion Explained - The Ultimate Guide",
-    description: "Master recursion with visual examples and step-by-step explanations. Perfect for beginners struggling with recursive thinking.",
-    type: "video" as const,
-    timestamp: "2:14 - 5:30",
-    duration: "12:45",
-    topic: "Recursion",
-    difficulty: "Intermediate" as const,
-    source: "YouTube",
-    featured: true,
-  },
-  {
-    id: "2",
-    title: "Understanding Linked Lists",
-    description: "Comprehensive tutorial covering singly and doubly linked lists, with implementation examples in multiple languages.",
-    type: "video" as const,
-    timestamp: "0:45 - 8:20",
-    duration: "18:30",
-    topic: "Data Structures",
-    difficulty: "Beginner" as const,
-    source: "YouTube",
-    featured: true,
-  },
-  {
-    id: "3",
-    title: "Big O Notation Demystified",
-    description: "Learn time and space complexity analysis with practical examples. Essential for coding interviews.",
-    type: "article" as const,
-    topic: "Algorithms",
-    difficulty: "Intermediate" as const,
-    source: "Medium",
-    featured: false,
-  },
-  {
-    id: "4",
-    title: "Binary Search Trees - Interactive Course",
-    description: "Hands-on course with interactive visualizations to understand BST operations, balancing, and traversal methods.",
-    type: "course" as const,
-    duration: "2.5 hours",
-    topic: "Data Structures",
-    difficulty: "Intermediate" as const,
-    source: "Coursera",
-    featured: true,
-  },
-  {
-    id: "5",
-    title: "Sorting Algorithms Visualized",
-    description: "Interactive tool to visualize how different sorting algorithms work. Compare bubble sort, merge sort, quick sort, and more.",
-    type: "interactive" as const,
-    topic: "Algorithms",
-    difficulty: "Beginner" as const,
-    source: "VisuAlgo",
-    featured: false,
-  },
-  {
-    id: "6",
-    title: "Dynamic Programming Patterns",
-    description: "Master the art of dynamic programming with common patterns and techniques used in competitive programming.",
-    type: "tutorial" as const,
-    topic: "Algorithms",
-    difficulty: "Advanced" as const,
-    source: "GeeksforGeeks",
-    featured: false,
-  },
-  {
-    id: "7",
-    title: "JavaScript Array Methods Deep Dive",
-    description: "Comprehensive guide to all array methods - map, filter, reduce, and more. With practical examples.",
-    type: "video" as const,
-    timestamp: "1:00 - 15:45",
-    duration: "28:15",
-    topic: "Arrays",
-    difficulty: "Beginner" as const,
-    source: "YouTube",
-    featured: false,
-  },
-  {
-    id: "8",
-    title: "Graph Algorithms Masterclass",
-    description: "BFS, DFS, Dijkstra's algorithm, and more. Complete guide to graph traversal and shortest path algorithms.",
-    type: "course" as const,
-    duration: "4 hours",
-    topic: "Algorithms",
-    difficulty: "Advanced" as const,
-    source: "Udemy",
-    featured: true,
-  },
-  {
-    id: "9",
-    title: "Hash Tables Explained",
-    description: "Understanding hash functions, collision resolution, and implementing your own hash table from scratch.",
-    type: "article" as const,
-    topic: "Data Structures",
-    difficulty: "Intermediate" as const,
-    source: "Dev.to",
-    featured: false,
-  },
-  {
-    id: "10",
-    title: "Function Composition and Currying",
-    description: "Functional programming concepts made simple. Learn about pure functions, composition, and currying patterns.",
-    type: "video" as const,
-    timestamp: "3:20 - 12:00",
-    duration: "22:10",
-    topic: "Functions",
-    difficulty: "Intermediate" as const,
-    source: "YouTube",
-    featured: false,
-  },
-]
-
-const topics = ["All", "Recursion", "Data Structures", "Algorithms", "Arrays", "Functions"]
 const types = ["video", "article", "course", "tutorial", "interactive"]
 const difficulties = ["Beginner", "Intermediate", "Advanced"]
-
 const typeIcons = {
-  video: Play,
-  article: FileText,
-  course: GraduationCap,
-  tutorial: Code,
-  interactive: Sparkles,
+  video: Play, article: FileText, course: GraduationCap,
+  tutorial: Code, interactive: Sparkles,
 }
 
 export default function ResourcesPage() {
+  const searchParams = useSearchParams()
+  const topicParam = searchParams.get("topic") || "All"
+
+  const [resources, setResources] = useState<any[]>([])
+  const [topics, setTopics] = useState<string[]>(["All"])
+  const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
   const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([])
-  const [selectedTopic, setSelectedTopic] = useState("All")
+  const [selectedTopic, setSelectedTopic] = useState(topicParam)
 
-  const filteredResources = resources.filter((resource) => {
-    const matchesSearch =
-      searchQuery === "" ||
-      resource.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      resource.description.toLowerCase().includes(searchQuery.toLowerCase())
+  useEffect(() => {
+    const url = selectedTopic !== "All"
+      ? `http://localhost:8000/api/resources?topic=${encodeURIComponent(selectedTopic)}`
+      : "http://localhost:8000/api/resources"
 
-    const matchesType =
-      selectedTypes.length === 0 || selectedTypes.includes(resource.type)
+    setLoading(true)
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        setResources(data)
+        // Build topic list dynamically from what came back
+        const uniqueTopics = ["All", ...Array.from(new Set(data.map((r: any) => r.topic))) as string[]]
+        setTopics(uniqueTopics)
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [selectedTopic])
 
-    const matchesDifficulty =
-      selectedDifficulties.length === 0 ||
-      selectedDifficulties.includes(resource.difficulty)
-
-    const matchesTopic =
-      selectedTopic === "All" || resource.topic === selectedTopic
-
-    return matchesSearch && matchesType && matchesDifficulty && matchesTopic
+  const filtered = resources.filter((r) => {
+    const matchSearch = !searchQuery ||
+      r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      r.description.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchType = selectedTypes.length === 0 || selectedTypes.includes(r.type)
+    const matchDiff = selectedDifficulties.length === 0 || selectedDifficulties.includes(r.difficulty)
+    return matchSearch && matchType && matchDiff
   })
 
-  const featuredResources = resources.filter((r) => r.featured)
+  const featured = resources.filter((r) => r.featured)
   const videoCount = resources.filter((r) => r.type === "video").length
   const articleCount = resources.filter((r) => r.type === "article").length
   const courseCount = resources.filter((r) => r.type === "course").length
 
-  const toggleType = (type: string) => {
-    setSelectedTypes((prev) =>
-      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-    )
-  }
-
-  const toggleDifficulty = (difficulty: string) => {
-    setSelectedDifficulties((prev) =>
-      prev.includes(difficulty)
-        ? prev.filter((d) => d !== difficulty)
-        : [...prev, difficulty]
-    )
-  }
-
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Page Header */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Resource Explorer</h1>
-            <p className="text-muted-foreground">
-              Curated learning resources to accelerate your skill development
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Resource Explorer</h1>
+          <p className="text-muted-foreground">Curated learning resources to accelerate your skill development</p>
         </div>
 
-        {/* Stats Cards */}
+        {/* Stats */}
         <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-destructive/10 p-2">
-                  <Play className="h-5 w-5 text-destructive" />
+          {[
+            { label: "Videos", count: videoCount, icon: Play, color: "bg-destructive/10 text-destructive" },
+            { label: "Articles", count: articleCount, icon: FileText, color: "bg-info/10 text-info" },
+            { label: "Courses", count: courseCount, icon: GraduationCap, color: "bg-primary/10 text-primary" },
+            { label: "Featured", count: featured.length, icon: Star, color: "bg-warning/10 text-warning" },
+          ].map(({ label, count, icon: Icon, color }) => (
+            <Card key={label}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`rounded-lg p-2 ${color.split(" ")[0]}`}>
+                    <Icon className={`h-5 w-5 ${color.split(" ")[1]}`} />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                    <p className="text-xl font-bold text-foreground">{loading ? "—" : count}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Videos</p>
-                  <p className="text-xl font-bold text-foreground">{videoCount}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-info/10 p-2">
-                  <FileText className="h-5 w-5 text-info" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Articles</p>
-                  <p className="text-xl font-bold text-foreground">{articleCount}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-primary/10 p-2">
-                  <GraduationCap className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Courses</p>
-                  <p className="text-xl font-bold text-foreground">{courseCount}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-warning/10 p-2">
-                  <Star className="h-5 w-5 text-warning" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Featured</p>
-                  <p className="text-xl font-bold text-foreground">{featuredResources.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
-        {/* Search and Filters */}
+        {/* Search & Filter */}
         <Card>
           <CardContent className="p-4">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
@@ -279,96 +114,94 @@ export default function ResourcesPage() {
                   className="pl-9"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Filter className="mr-2 h-4 w-4" />
-                      Filters
-                      {(selectedTypes.length > 0 || selectedDifficulties.length > 0) && (
-                        <Badge variant="secondary" className="ml-2">
-                          {selectedTypes.length + selectedDifficulties.length}
-                        </Badge>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel>Resource Type</DropdownMenuLabel>
-                    {types.map((type) => {
-                      const Icon = typeIcons[type as keyof typeof typeIcons]
-                      return (
-                        <DropdownMenuCheckboxItem
-                          key={type}
-                          checked={selectedTypes.includes(type)}
-                          onCheckedChange={() => toggleType(type)}
-                        >
-                          <Icon className="mr-2 h-4 w-4" />
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </DropdownMenuCheckboxItem>
-                      )
-                    })}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Difficulty</DropdownMenuLabel>
-                    {difficulties.map((difficulty) => (
-                      <DropdownMenuCheckboxItem
-                        key={difficulty}
-                        checked={selectedDifficulties.includes(difficulty)}
-                        onCheckedChange={() => toggleDifficulty(difficulty)}
-                      >
-                        {difficulty}
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {(selectedTypes.length > 0 || selectedDifficulties.length > 0 || searchQuery) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedTypes([])
-                      setSelectedDifficulties([])
-                      setSearchQuery("")
-                    }}
-                  >
-                    Clear
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Filter className="mr-2 h-4 w-4" />
+                    Filters
+                    {(selectedTypes.length > 0 || selectedDifficulties.length > 0) && (
+                      <Badge variant="secondary" className="ml-2">
+                        {selectedTypes.length + selectedDifficulties.length}
+                      </Badge>
+                    )}
                   </Button>
-                )}
-              </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Resource Type</DropdownMenuLabel>
+                  {types.map((type) => {
+                    const Icon = typeIcons[type as keyof typeof typeIcons]
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={type}
+                        checked={selectedTypes.includes(type)}
+                        onCheckedChange={() =>
+                          setSelectedTypes((prev) =>
+                            prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+                          )
+                        }
+                      >
+                        <Icon className="mr-2 h-4 w-4" />
+                        {type.charAt(0).toUpperCase() + type.slice(1)}
+                      </DropdownMenuCheckboxItem>
+                    )
+                  })}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>Difficulty</DropdownMenuLabel>
+                  {difficulties.map((d) => (
+                    <DropdownMenuCheckboxItem
+                      key={d}
+                      checked={selectedDifficulties.includes(d)}
+                      onCheckedChange={() =>
+                        setSelectedDifficulties((prev) =>
+                          prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
+                        )
+                      }
+                    >
+                      {d}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </CardContent>
         </Card>
 
-        {/* Topic Tabs */}
-        <Tabs value={selectedTopic} onValueChange={setSelectedTopic}>
-          <TabsList className="flex-wrap h-auto gap-1 p-1">
-            {topics.map((topic) => (
-              <TabsTrigger key={topic} value={topic} className="px-4">
-                {topic}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+        {/* Topic tabs - built dynamically from the API response */}
+        <div className="flex flex-wrap gap-2">
+          {topics.map((topic) => (
+            <Badge
+              key={topic}
+              variant={selectedTopic === topic ? "default" : "secondary"}
+              className="cursor-pointer px-4 py-1.5 text-sm"
+              onClick={() => setSelectedTopic(topic)}
+            >
+              {topic}
+            </Badge>
+          ))}
+        </div>
 
-          <TabsContent value={selectedTopic} className="mt-6">
-            {/* Featured Section */}
-            {selectedTopic === "All" && featuredResources.length > 0 && (
-              <div className="mb-8">
+        {loading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-48" />)}
+          </div>
+        ) : (
+          <>
+            {/* Featured */}
+            {selectedTopic === "All" && featured.length > 0 && (
+              <div>
                 <div className="flex items-center gap-2 mb-4">
                   <Star className="h-5 w-5 text-warning" />
                   <h2 className="text-lg font-semibold text-foreground">Featured Resources</h2>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {featuredResources.slice(0, 3).map((resource) => (
-                    <ResourceCard
-                      key={resource.id}
-                      {...resource}
-                      onWatch={() => console.log(`Opening resource: ${resource.id}`)}
-                    />
+                  {featured.slice(0, 3).map((r) => (
+                    <ResourceCard key={r.id} {...r} onWatch={() => {}} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* All Resources Grid */}
+            {/* All */}
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -377,42 +210,24 @@ export default function ResourcesPage() {
                     {selectedTopic === "All" ? "All Resources" : `${selectedTopic} Resources`}
                   </h2>
                 </div>
-                <span className="text-sm text-muted-foreground">
-                  {filteredResources.length} resource{filteredResources.length !== 1 ? "s" : ""}
-                </span>
+                <span className="text-sm text-muted-foreground">{filtered.length} resource{filtered.length !== 1 ? "s" : ""}</span>
               </div>
-              
-              {filteredResources.length > 0 ? (
+              {filtered.length > 0 ? (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {filteredResources.map((resource) => (
-                    <ResourceCard
-                      key={resource.id}
-                      {...resource}
-                      onWatch={() => console.log(`Opening resource: ${resource.id}`)}
-                    />
+                  {filtered.map((r) => (
+                    <ResourceCard key={r.id} {...r} onWatch={() => {}} />
                   ))}
                 </div>
               ) : (
                 <Card>
                   <CardContent className="p-8 text-center">
-                    <p className="text-muted-foreground mb-2">No resources found matching your criteria.</p>
-                    <Button
-                      variant="link"
-                      onClick={() => {
-                        setSelectedTypes([])
-                        setSelectedDifficulties([])
-                        setSearchQuery("")
-                        setSelectedTopic("All")
-                      }}
-                    >
-                      Clear all filters
-                    </Button>
+                    <p className="text-muted-foreground">No resources found.</p>
                   </CardContent>
                 </Card>
               )}
             </div>
-          </TabsContent>
-        </Tabs>
+          </>
+        )}
       </div>
     </AppShell>
   )
