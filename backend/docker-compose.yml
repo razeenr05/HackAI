@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hackai_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: 
+      GEMINI_API_KEY: 
+      YOUTUBE_API_KEY: 
+    volumes:
+      - ./backend:/app 
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hackai_net
+
+  db:
+    image: postgres:15-alpine
+    container_name: hackai_db
+    environment:
+      POSTGRES_USER: 
+      POSTGRES_PASSWORD: 
+      POSTGRES_DB: 
+    ports:
+      - 
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hackai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hackai_net
+
+volumes:
+  postgres_data:
+
+networks:
+  hackai_net:
+    driver: bridge
