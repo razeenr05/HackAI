@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-
   backend:
     build:
       context: ./backend
@@ -10,9 +9,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: 
-      GEMINI_API_KEY: 
-      YOUTUBE_API_KEY: 
+      DATABASE_URL: postgresql://admin:password123@db:5432/hackai_db
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
     volumes:
       - ./backend:/app 
     depends_on:
@@ -25,15 +24,15 @@ services:
     image: postgres:15-alpine
     container_name: hackai_db
     environment:
-      POSTGRES_USER: 
-      POSTGRES_PASSWORD: 
-      POSTGRES_DB: 
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: hackai_db
     ports:
-      - 
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hackai"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d hackai_db"]
       interval: 5s
       timeout: 5s
       retries: 5
