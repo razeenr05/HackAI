@@ -1,14 +1,32 @@
-from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey, UniqueConstraint, Boolean, DateTime
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy import text
 from database import Base
+import datetime
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id             = Column(String,  primary_key=True, index=True)   # UUID
+    email          = Column(String,  unique=True, nullable=False, index=True)
+    name           = Column(String,  nullable=True)
+    avatar_url     = Column(String,  nullable=True)
+    # Password auth — null if google-only user
+    hashed_password = Column(String, nullable=True)
+    # Google OAuth — null if email/password user
+    google_id      = Column(String,  unique=True, nullable=True, index=True)
+    created_at     = Column(DateTime, default=datetime.datetime.utcnow)
+
+    def __repr__(self):
+        return f"<User id={self.id!r} email={self.email!r}>"
 
 
 class Node(Base):
     __tablename__ = "nodes"
 
     id          = Column(String,  primary_key=True, index=True)
-    user_id     = Column(String,  nullable=False, index=True)   # each user gets their own graph
+    user_id     = Column(String,  nullable=False, index=True)
     label       = Column(String,  nullable=False)
     status      = Column(String,  nullable=False, default="recommended")
     level       = Column(Integer, nullable=False, default=0)
@@ -52,9 +70,6 @@ class Node(Base):
     def related_topics(self, value: list):
         self._related_topics = "|".join(value) if value else ""
 
-    def __repr__(self):
-        return f"<Node id={self.id!r} user={self.user_id!r} label={self.label!r}>"
-
 
 class NodeResource(Base):
     __tablename__ = "node_resources"
@@ -97,10 +112,6 @@ class UserProgress(Base):
 
 
 def get_all_prerequisites(db: Session, node_id: str) -> list:
-    """
-    Walks the Edge graph upward using a recursive CTE.
-    Returns all ancestor Node objects (direct + transitive prerequisites).
-    """
     cte_sql = text("""
         WITH RECURSIVE prereqs(node_id) AS (
             SELECT source_id AS node_id
@@ -115,11 +126,8 @@ def get_all_prerequisites(db: Session, node_id: str) -> list:
         )
         SELECT DISTINCT node_id FROM prereqs
     """)
-
     rows = db.execute(cte_sql, {"start": node_id}).fetchall()
     prereq_ids = [row[0] for row in rows]
-
     if not prereq_ids:
         return []
-
     return db.query(Node).filter(Node.id.in_(prereq_ids)).all()

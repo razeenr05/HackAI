@@ -7,6 +7,7 @@ import math
 
 from database import get_db, engine
 import models
+import auth as auth_module
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -19,6 +20,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_module.router)
 
 
 # ---------------------------------------------------------------------------
