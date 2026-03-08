@@ -19,19 +19,14 @@ import { Button } from "@/components/ui/button"
 
 const navItems = [
   {
-    title: "Dashboard",
-    href: "/",
-    icon: LayoutDashboard,
-  },
-  {
     title: "Learn",
     href: "/learn",
     icon: Sparkles,
   },
   {
-    title: "Skill Assessment",
-    href: "/assessment",
-    icon: Target,
+    title: "Practice",
+    href: "/practice",
+    icon: BookOpen,
   },
   {
     title: "Mind Map",
@@ -39,9 +34,14 @@ const navItems = [
     icon: Network,
   },
   {
-    title: "Practice",
-    href: "/practice",
-    icon: BookOpen,
+    title: "Dashboard",
+    href: "/",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Skill Assessment",
+    href: "/assessment",
+    icon: Target,
   },
   {
     title: "Recommendations",
