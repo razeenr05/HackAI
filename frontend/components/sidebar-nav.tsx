@@ -21,13 +21,41 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
 const navItems = [
-  { title: "Dashboard",       href: "/",              icon: LayoutDashboard },
-  { title: "Learn",           href: "/learn",         icon: Sparkles        },
-  { title: "Mind Map",        href: "/mindmap",       icon: Network         },
-  { title: "Skill Assessment",href: "/assessment",    icon: Target          },
-  { title: "Practice",        href: "/practice",      icon: BookOpen        },
-  { title: "Recommendations", href: "/recommendations",icon: Lightbulb      },
-  { title: "Resources",       href: "/resources",     icon: PlayCircle      },
+  {
+    title: "Learn",
+    href: "/learn",
+    icon: Sparkles,
+  },
+  {
+    title: "Practice",
+    href: "/practice",
+    icon: BookOpen,
+  },
+  {
+    title: "Mind Map",
+    href: "/mindmap",
+    icon: Network,
+  },
+  {
+    title: "Dashboard",
+    href: "/",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Skill Assessment",
+    href: "/assessment",
+    icon: Target,
+  },
+  {
+    title: "Recommendations",
+    href: "/recommendations",
+    icon: Lightbulb,
+  },
+  {
+    title: "Resources",
+    href: "/resources",
+    icon: PlayCircle,
+  },
 ]
 
 interface SidebarNavProps {
