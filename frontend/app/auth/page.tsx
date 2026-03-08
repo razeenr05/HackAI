@@ -12,7 +12,7 @@ declare global {
   interface Window { google?: any }
 }
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "1072836542574-i0tclmdusll92gp92krm756ijfftfc6d.apps.googleusercontent.com"
 
 const features = [
   { icon: Sparkles, title: "AI-Generated Paths",    desc: "Any topic, any skill — instantly mapped" },
