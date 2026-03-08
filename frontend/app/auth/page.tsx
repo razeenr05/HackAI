@@ -12,7 +12,7 @@ declare global {
   interface Window { google?: any }
 }
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "1072836542574-i0tclmdusll92gp92krm756ijfftfc6d.apps.googleusercontent.com"
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? ""
 
 const features = [
   { icon: Sparkles, title: "AI-Generated Paths",    desc: "Any topic, any skill — instantly mapped" },
@@ -77,40 +77,39 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen bg-background flex">
 
-      {/* ── Left panel — branding ─────────────────────────────────────── */}
-      <div className="hidden lg:flex lg:w-[52%] relative overflow-hidden flex-col justify-between p-12" style={{background: "linear-gradient(135deg, #1a3a5c 0%, #1e4976 50%, #1a3a5c 100%)"}}>
+      {/* ── Left panel — branding (theme-aware, matches app sidebar) ───── */}
+      <div className="hidden lg:flex lg:w-[52%] relative overflow-hidden flex-col justify-between p-12 bg-sidebar border-r border-sidebar-border">
 
         {/* Background texture */}
-        <div className="absolute inset-0 opacity-10"
+        <div className="absolute inset-0 opacity-[0.06] dark:opacity-[0.08]"
           style={{
-            backgroundImage: `radial-gradient(circle at 20% 50%, white 1px, transparent 1px),
-                              radial-gradient(circle at 80% 20%, white 1px, transparent 1px),
-                              radial-gradient(circle at 60% 80%, white 1px, transparent 1px)`,
+            backgroundImage: `radial-gradient(circle at 20% 50%, currentColor 1px, transparent 1px),
+                              radial-gradient(circle at 80% 20%, currentColor 1px, transparent 1px),
+                              radial-gradient(circle at 60% 80%, currentColor 1px, transparent 1px)`,
             backgroundSize: "60px 60px, 80px 80px, 40px 40px"
           }}
         />
 
         {/* Decorative circles */}
-        <div className="absolute top-[-80px] right-[-80px] w-[320px] h-[320px] rounded-full bg-white/5 border border-white/10" />
-        <div className="absolute bottom-[-60px] left-[-60px] w-[240px] h-[240px] rounded-full bg-white/5 border border-white/10" />
-        <div className="absolute top-1/2 right-[-40px] w-[160px] h-[160px] rounded-full bg-white/5 border border-white/10" />
+        <div className="absolute top-[-80px] right-[-80px] w-[320px] h-[320px] rounded-full bg-sidebar-accent/20 border border-sidebar-border" />
+        <div className="absolute bottom-[-60px] left-[-60px] w-[240px] h-[240px] rounded-full bg-sidebar-accent/20 border border-sidebar-border" />
+        <div className="absolute top-1/2 right-[-40px] w-[160px] h-[160px] rounded-full bg-sidebar-accent/20 border border-sidebar-border" />
 
         {/* Logo */}
         <div className="relative z-10 flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/20 backdrop-blur border border-white/30">
-            {/* Logo placeholder — swap with <img src="/logo.png" /> when ready */}
-            <MapPin className="h-8 w-8 text-white" />
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary border border-primary/20">
+            <MapPin className="h-8 w-8 text-primary-foreground" />
           </div>
-          <span className="text-3xl font-bold text-white tracking-tight">MapScribe.ai</span>
+          <span className="text-3xl font-bold text-sidebar-foreground tracking-tight">MapScribe.ai</span>
         </div>
 
         {/* Main copy */}
         <div className="relative z-10 space-y-6">
           <div className="space-y-3">
-            <h1 className="text-4xl font-bold text-white leading-tight">
+            <h1 className="text-4xl font-bold text-sidebar-foreground leading-tight">
               Map your path<br />to mastery.
             </h1>
-            <p className="text-white/70 text-lg leading-relaxed max-w-sm">
+            <p className="text-muted-foreground text-lg leading-relaxed max-w-sm">
               AI builds you a personalized knowledge graph for anything you want to learn — then guides you through it.
             </p>
           </div>
@@ -118,12 +117,12 @@ export default function AuthPage() {
           <div className="space-y-3">
             {features.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="flex items-start gap-3 group">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 border border-white/20 mt-0.5">
-                  <Icon className="h-4 w-4 text-white" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-accent border border-sidebar-border mt-0.5">
+                  <Icon className="h-4 w-4 text-sidebar-foreground" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-white">{title}</p>
-                  <p className="text-xs text-white/60">{desc}</p>
+                  <p className="text-sm font-medium text-sidebar-foreground">{title}</p>
+                  <p className="text-xs text-muted-foreground">{desc}</p>
                 </div>
               </div>
             ))}
@@ -132,7 +131,7 @@ export default function AuthPage() {
 
         {/* Bottom quote */}
         <div className="relative z-10">
-          <p className="text-white/40 text-xs">
+          <p className="text-muted-foreground text-xs">
             From basketball to machine learning — learn anything, your way.
           </p>
         </div>

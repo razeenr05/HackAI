@@ -24,6 +24,8 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+# Optional: comma-separated list if you have multiple OAuth clients (e.g. old + new during migration)
+# If set, token aud must match one of these. If not set, GOOGLE_CLIENT_ID is used.
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -88,8 +90,12 @@ def verify_google_token(id_token: str) -> dict:
     except urllib.error.HTTPError:
         raise HTTPException(status_code=401, detail="Invalid Google token")
 
-    # Verify the token was issued for our app
-    if GOOGLE_CLIENT_ID and data.get("aud") != GOOGLE_CLIENT_ID:
+    # Verify the token was issued for our app (must match the client_id used in the frontend)
+    allowed_audiences = [a.strip() for a in os.getenv("GOOGLE_CLIENT_IDS", "").split(",") if a.strip()]
+    if not allowed_audiences:
+        if GOOGLE_CLIENT_ID:
+            allowed_audiences = [GOOGLE_CLIENT_ID]
+    if allowed_audiences and data.get("aud") not in allowed_audiences:
         raise HTTPException(status_code=401, detail="Google token audience mismatch")
 
     return data
