@@ -1,7 +1,8 @@
 "use client"
 
+import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { X, BookOpen, Code, Link2, ArrowRight } from "lucide-react"
+import { X, BookOpen, Code, Link2, ArrowRight, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -31,21 +32,122 @@ const statusLabels: Record<ConceptStatus, { label: string; color: string }> = {
   locked: { label: "Locked", color: "bg-muted text-muted-foreground border-border" },
 }
 
+// ---------------------------------------------------------------------------
+// VideoSnippetPlayer — fetches and embeds the best YouTube clip for a topic
+// ---------------------------------------------------------------------------
+
+function VideoSnippetPlayer({ nodeId, label }: { nodeId: string; label: string }) {
+  const [snippet, setSnippet] = useState<{
+    url: string
+    start_time: number
+    end_time: number
+    reasoning: string
+    video_title: string
+  } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchSnippet = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`http://localhost:8000/api/snippet/${nodeId}`)
+      if (!res.ok) throw new Error("Failed to fetch snippet")
+      const data = await res.json()
+      setSnippet(data)
+    } catch (e) {
+      setError("Could not load snippet. Try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getEmbedUrl = () => {
+    if (!snippet) return null
+    const match = snippet.url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)
+    if (!match) return null
+    return `https://www.youtube.com/embed/${match[1]}?start=${snippet.start_time}&end=${snippet.end_time}&autoplay=1`
+  }
+
+  const embedUrl = getEmbedUrl()
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <Play className="h-4 w-4 text-primary" />
+        <p className="text-sm font-medium text-foreground">Video Snippet</p>
+      </div>
+
+      {!snippet && !loading && (
+        <button
+          onClick={fetchSnippet}
+          className="w-full rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:border-primary/30 hover:text-foreground transition-colors text-left"
+        >
+          Find best video clip for &quot;{label}&quot;
+        </button>
+      )}
+
+      {loading && (
+        <div className="rounded-lg bg-secondary/50 px-3 py-4 text-center text-sm text-muted-foreground animate-pulse">
+          Searching YouTube...
+        </div>
+      )}
+
+      {error && (
+        <div className="space-y-2">
+          <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+          <button
+            onClick={fetchSnippet}
+            className="text-xs text-primary hover:underline"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {snippet && embedUrl && (
+        <div className="space-y-2">
+          <div className="rounded-lg overflow-hidden border border-border aspect-video">
+            <iframe
+              src={embedUrl}
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
+              allowFullScreen
+            />
+          </div>
+          {snippet.reasoning && (
+            <p className="text-xs text-muted-foreground italic">{snippet.reasoning}</p>
+          )}
+          {snippet.video_title && (
+            <p className="text-xs text-muted-foreground truncate">📺 {snippet.video_title}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ConceptPanel
+// ---------------------------------------------------------------------------
+
 export function ConceptPanel({ concept, onClose }: ConceptPanelProps) {
   const router = useRouter()
-  
+
   if (!concept) return null
 
   const statusInfo = statusLabels[concept.status]
-  
+
   const handleStartLearning = () => {
     router.push(`/practice?topic=${encodeURIComponent(concept.label)}`)
   }
-  
+
   const handlePracticeClick = () => {
     router.push(`/practice?topic=${encodeURIComponent(concept.label)}`)
   }
-  
+
   const handleResourceClick = () => {
     router.push(`/resources?topic=${encodeURIComponent(concept.label)}`)
   }
@@ -96,6 +198,11 @@ export function ConceptPanel({ concept, onClose }: ConceptPanelProps) {
               {concept.explanation}
             </p>
           </div>
+
+          <Separator />
+
+          {/* Video Snippet */}
+          <VideoSnippetPlayer nodeId={concept.id} label={concept.label} />
 
           <Separator />
 
