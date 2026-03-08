@@ -71,15 +71,15 @@ export function KnowledgeGraph() {
         animated: e.animated ?? false,
         type: "smoothstep",
         style: {
-          ...(e.style ?? {}),
-          stroke: e.animated ? "hsl(var(--primary))" : "hsl(var(--border))",
-          strokeWidth: 2,
+          stroke: e.animated ? "var(--primary)" : "var(--muted-foreground)",
+          strokeWidth: e.animated ? 2.5 : 1.8,
+          opacity: 0.8,
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: e.animated ? "hsl(var(--primary))" : "hsl(var(--border))",
-          width: 16,
-          height: 16,
+          color: e.animated ? "var(--primary)" : "var(--muted-foreground)",
+          width: 18,
+          height: 18,
         },
       }))
 
@@ -99,11 +99,28 @@ export function KnowledgeGraph() {
       const res = await fetch(`http://localhost:8000/api/nodes/${node.id}`)
       if (!res.ok) return
       const data: ConceptDetails = await res.json()
-      setSelectedConcept(data)
+      // Use live status from the node in state (may differ from DB row status)
+      const liveNode = nodes.find(n => n.id === node.id)
+      setSelectedConcept({ ...data, status: liveNode?.data.status ?? data.status })
     } catch { /* silently ignore */ }
-  }, [])
+  }, [nodes])
 
-  // Called by ConceptPanel when user marks a node complete or uncomplete
+  const handleMarkStart = useCallback(async (nodeId: string) => {
+    try {
+      await fetch("http://localhost:8000/api/progress/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, node_id: nodeId }),
+      })
+      await loadGraph()
+      const res = await fetch(`http://localhost:8000/api/nodes/${nodeId}`)
+      if (res.ok) {
+        const updated = await res.json()
+        setSelectedConcept({ ...updated, status: "in-progress" })
+      }
+    } catch { /* ignore */ }
+  }, [userId, loadGraph])
+
   const handleMarkComplete = useCallback(async (nodeId: string) => {
     try {
       await fetch("http://localhost:8000/api/progress/complete", {
@@ -111,13 +128,10 @@ export function KnowledgeGraph() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, node_id: nodeId }),
       })
-      // Refresh graph to update statuses and unlock next nodes
       await loadGraph()
-      // Re-fetch concept detail so the panel reflects the new "completed" status
       const res = await fetch(`http://localhost:8000/api/nodes/${nodeId}`)
       if (res.ok) {
         const updated = await res.json()
-        // Force status to "completed" since the progress endpoint doesn't mutate the node row
         setSelectedConcept({ ...updated, status: "completed" })
       }
     } catch { /* ignore */ }
@@ -131,7 +145,6 @@ export function KnowledgeGraph() {
         body: JSON.stringify({ user_id: userId, node_id: nodeId }),
       })
       await loadGraph()
-      // Re-fetch concept detail so panel reflects the updated status
       const res = await fetch(`http://localhost:8000/api/nodes/${nodeId}`)
       if (res.ok) {
         const updated = await res.json()
@@ -164,7 +177,7 @@ export function KnowledgeGraph() {
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground p-8 text-center">
         <span className="text-4xl">🗺️</span>
         <p className="font-medium text-foreground">No mind map yet</p>
-        <p className="text-sm">Go to <strong>Skill Assessment</strong> and enter a learning goal to generate your personalised knowledge graph.</p>
+        <p className="text-sm">Go to <strong>Learn</strong> and enter a learning goal to generate your personalised knowledge graph.</p>
       </div>
     )
   }
@@ -180,21 +193,25 @@ export function KnowledgeGraph() {
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: 0.25 }}
         className="bg-background"
+        defaultEdgeOptions={{
+          type: "smoothstep",
+          style: { strokeWidth: 2 },
+        }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(var(--border))" />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
         <Controls className="!bg-card !border-border !shadow-lg [&>button]:!bg-card [&>button]:!border-border [&>button]:!text-foreground [&>button:hover]:!bg-secondary" />
         <MiniMap
           className="!bg-card !border-border"
           nodeColor={(node) => {
             const data = node.data as ConceptNodeData
             switch (data.status) {
-              case "completed":    return "hsl(var(--success))"
-              case "in-progress":  return "hsl(var(--warning))"
-              case "weak":         return "hsl(var(--destructive))"
-              case "recommended":  return "hsl(var(--primary))"
-              default:             return "hsl(var(--muted))"
+              case "completed":    return "var(--success)"
+              case "in-progress":  return "var(--warning)"
+              case "weak":         return "var(--destructive)"
+              case "recommended":  return "var(--primary)"
+              default:             return "var(--muted)"
             }
           }}
         />
@@ -202,6 +219,7 @@ export function KnowledgeGraph() {
       <ConceptPanel
         concept={selectedConcept}
         onClose={handleClosePanel}
+        onMarkStart={handleMarkStart}
         onMarkComplete={handleMarkComplete}
         onMarkUncomplete={handleMarkUncomplete}
       />

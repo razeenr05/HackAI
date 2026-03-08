@@ -74,7 +74,20 @@ def _search_youtube(topic: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _fetch_transcript(video_id: str) -> Optional[list[dict]]:
+    """Supports both youtube-transcript-api <1.0 (static) and >=1.0 (instance)."""
     try:
+        # v1.0+ uses instance API: YouTubeTranscriptApi().fetch(video_id)
+        api = YouTubeTranscriptApi()
+        transcript = api.fetch(video_id, languages=["en", "en-US"])
+        # v1.0 returns FetchedTranscript object — convert to list of dicts
+        return [{"start": s.start, "duration": s.duration, "text": s.text} for s in transcript]
+    except AttributeError:
+        pass
+    except Exception as exc:
+        logger.warning("Transcript v1.0 error for %s: %s", video_id, exc)
+
+    try:
+        # v0.x uses class method: YouTubeTranscriptApi.get_transcript(video_id)
         return YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US"])
     except (NoTranscriptFound, TranscriptsDisabled) as exc:
         logger.warning("No transcript for %s: %s", video_id, exc)
@@ -102,41 +115,52 @@ def _transcript_to_text(transcript: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 def _ask_gemini_for_timestamps(topic: str, video_title: str, transcript_text: str) -> dict:
-    try:
-        import google.generativeai as genai  # type: ignore
-    except ImportError:
-        return {"start_time": 0, "end_time": 120, "reasoning": "google-generativeai not installed"}
+    import urllib.request, urllib.error
 
     if not GEMINI_API_KEY:
         return {"start_time": 0, "end_time": 120, "reasoning": "No Gemini API key"}
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(LLM_MODEL)
-
     prompt = (
         "You are an educational content analyst. "
-        "Given a YouTube transcript with timestamps (seconds), "
-        "find the single best continuous 1–5 minute segment that explains the topic. "
-        "Reply ONLY with valid JSON, no markdown:\n"
-        '{"start_time": <int>, "end_time": <int>, "reasoning": "<one sentence>"}\n\n'
-        f"Topic: {topic}\nVideo: {video_title}\n\nTranscript:\n{transcript_text}"
+        "Given a YouTube transcript with timestamps in seconds, "
+        "find the single best 2-4 minute continuous segment where the speaker directly explains the topic. "
+        "Look for where the core concept is introduced and explained clearly. "
+        "Reply ONLY with a raw JSON object — no markdown, no code fences, no extra text:\n"
+        '{"start_time": 120, "end_time": 360, "reasoning": "example"}\n\n'
+        f"Topic to find: {topic}\n"
+        f"Video title: {video_title}\n\n"
+        f"Transcript (format: [Nseconds] text):\n{transcript_text}"
     )
 
-    try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(temperature=0.2, max_output_tokens=200),
-        )
-        raw    = re.sub(r"```(?:json)?|```", "", response.text.strip()).strip()
-        parsed = json.loads(raw)
-        start  = int(parsed.get("start_time", 0))
-        end    = int(parsed.get("end_time", start + 120))
-        if end <= start:      end = start + 120
-        if end - start > 600: end = start + 600
-        return {"start_time": start, "end_time": end, "reasoning": str(parsed.get("reasoning", ""))}
-    except Exception as exc:
-        logger.error("Gemini failed: %s", exc)
-        return {"start_time": 0, "end_time": 120, "reasoning": "Could not determine best segment"}
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300}
+    }).encode("utf-8")
+
+    models = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        req = urllib.request.Request(url, data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            raw = re.sub(r"```(?:json)?|```", "", raw).strip()
+            parsed = json.loads(raw)
+            start  = int(parsed.get("start_time", 0))
+            end    = int(parsed.get("end_time", start + 180))
+            if end <= start:      end = start + 180
+            if end - start > 600: end = start + 600
+            if start < 0:         start = 0
+            return {"start_time": start, "end_time": end, "reasoning": str(parsed.get("reasoning", ""))}
+        except urllib.error.HTTPError as e:
+            logger.warning("Gemini %s failed: %s", model, e.code)
+            continue
+        except Exception as exc:
+            logger.error("Gemini timestamp error: %s", exc)
+            continue
+    return {"start_time": 0, "end_time": 180, "reasoning": "Could not determine best segment"}
 
 
 # ---------------------------------------------------------------------------

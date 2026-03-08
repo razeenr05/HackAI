@@ -12,7 +12,7 @@ export function AppShell({ children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background bg-page-gradient">
       <SidebarNav open={sidebarOpen} onOpenChange={setSidebarOpen} />
       <div className="lg:pl-64">
         <AppHeader onMenuClick={() => setSidebarOpen(true)} />

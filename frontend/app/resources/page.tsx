@@ -58,7 +58,13 @@ function getVideoId(url: string): string | null {
 function buildEmbedUrl(url: string, start: number, end: number): string {
   const id = getVideoId(url)
   if (!id) return ""
-  return `https://www.youtube.com/embed/${id}?start=${start}&end=${end}&autoplay=1&rel=0`
+  return `https://www.youtube.com/embed/${id}?start=${start}&autoplay=1&rel=0&modestbranding=1`
+}
+
+function buildWatchUrl(url: string, start: number): string {
+  const id = getVideoId(url)
+  if (!id) return url
+  return `https://www.youtube.com/watch?v=${id}&t=${start}s`
 }
 
 function formatTime(seconds: number): string {
@@ -130,11 +136,21 @@ function ResourceCard({ resource }: { resource: Resource }) {
   }
 
   const openExternal = () => {
-    window.open(
-      `https://www.google.com/search?q=${encodeURIComponent(resource.title)}`,
-      "_blank",
-      "noopener,noreferrer"
-    )
+    // For non-video resources: open YouTube search for tutorials/courses, Google for articles/books
+    const titleAndTopic = `${resource.title} ${resource.topic}`
+    let url: string
+    if (normType === "tutorial" || normType === "course" || normType === "interactive") {
+      // YouTube is best for tutorials and courses
+      url = `https://www.youtube.com/results?search_query=${encodeURIComponent(titleAndTopic)}`
+    } else if (normType === "article" || normType === "website") {
+      // Google search — user can pick the actual article from results
+      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}`
+    } else if (normType === "book") {
+      url = `https://www.google.com/search?q=${encodeURIComponent(resource.title + " free read online")}`
+    } else {
+      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}`
+    }
+    window.open(url, "_blank", "noopener,noreferrer")
   }
 
   // Has Gemini returned real timestamps (not the 0–120 fallback)?
@@ -213,13 +229,13 @@ function ResourceCard({ resource }: { resource: Resource }) {
             )}
 
             <a
-              href={snippet.url}
+              href={buildWatchUrl(snippet.url, snippet.start_time)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
             >
               <ExternalLink className="h-3 w-3" />
-              Watch full video on YouTube
+              Watch on YouTube from {formatTime(snippet.start_time)} ↗
             </a>
           </div>
         )}
@@ -248,7 +264,11 @@ function ResourceCard({ resource }: { resource: Resource }) {
         {!isVideo && (
           <Button className="w-full" variant="outline" onClick={openExternal}>
             <ExternalLink className="mr-2 h-4 w-4" />
-            Open Resource
+            {normType === "tutorial" || normType === "course"
+              ? "Find on YouTube ↗"
+              : normType === "book"
+              ? "Find Book Online ↗"
+              : "Search Google ↗"}
           </Button>
         )}
 
@@ -306,7 +326,7 @@ export default function ResourcesPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
+      <div className="space-y-6 stagger-reveal">
 
         {/* Header */}
         <div>

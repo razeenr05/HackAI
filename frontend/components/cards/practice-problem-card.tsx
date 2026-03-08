@@ -1,12 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, ChevronUp, Lightbulb, Code, CheckCircle2, X, Send, Loader2, Trophy, AlertCircle } from "lucide-react"
+import { ChevronDown, ChevronUp, Lightbulb, CheckCircle2, XCircle, Loader2, Trophy, AlertCircle } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Textarea } from "@/components/ui/textarea"
-import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
 
 type Difficulty = "Easy" | "Medium" | "Hard"
@@ -23,11 +21,10 @@ interface PracticeProblemCardProps {
   onStart?: () => void
 }
 
-interface GradeResult {
-  correct: boolean
-  score: number
-  feedback: string
-  model_answer: string
+interface ChoicesResult {
+  choices: string[]
+  correct_index: number
+  explanation: string
 }
 
 const difficultyConfig: Record<Difficulty, { color: string; bg: string }> = {
@@ -36,57 +33,64 @@ const difficultyConfig: Record<Difficulty, { color: string; bg: string }> = {
   Hard:   { color: "text-destructive", bg: "bg-destructive/10 border-destructive/30" },
 }
 
+const letters = ["A", "B", "C", "D"]
+
 export function PracticeProblemCard({
-  id, title, description, difficulty, topic, hint, expectedOutput, isCompleted = false, onStart,
+  id, title, description, difficulty, topic, hint, isCompleted = false, onStart,
 }: PracticeProblemCardProps) {
   const [showHint,    setShowHint]    = useState(false)
-  const [showOutput,  setShowOutput]  = useState(false)
   const [modalOpen,   setModalOpen]   = useState(false)
-  const [answer,      setAnswer]      = useState("")
-  const [grading,     setGrading]     = useState(false)
-  const [result,      setResult]      = useState<GradeResult | null>(null)
+  const [loadingMC,   setLoadingMC]   = useState(false)
+  const [choices,     setChoices]     = useState<ChoicesResult | null>(null)
+  const [selected,    setSelected]    = useState<number | null>(null)
+  const [submitted,   setSubmitted]   = useState(false)
   const [completed,   setCompleted]   = useState(isCompleted)
 
   const config = difficultyConfig[difficulty]
 
-  const handleStart = () => {
-    setResult(null)
-    setAnswer("")
+  const handleStart = async () => {
+    setSelected(null)
+    setSubmitted(false)
+    setChoices(null)
     setModalOpen(true)
-  }
-
-  const handleSubmit = async () => {
-    if (!answer.trim()) return
-    setGrading(true)
+    setLoadingMC(true)
     try {
-      const res = await fetch("http://localhost:8000/api/grade-answer", {
+      const res = await fetch("http://localhost:8000/api/generate-choices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: title, topic, user_answer: answer }),
+        body: JSON.stringify({ question: title, topic }),
       })
-      const data: GradeResult = await res.json()
-      setResult(data)
-      if (data.score >= 70) {
-        setCompleted(true)
-        onStart?.()
-      }
+      const data: ChoicesResult = await res.json()
+      setChoices(data)
     } catch {
-      setResult({
-        correct: false,
-        score: 0,
-        feedback: "Could not connect to grading service. Make sure the backend is running.",
-        model_answer: "",
+      // Fallback placeholder choices
+      setChoices({
+        choices: ["Could not load choices — check backend", "Try Again", "Reload the page", "Check your connection"],
+        correct_index: 0,
+        explanation: "Backend not reachable."
       })
     } finally {
-      setGrading(false)
+      setLoadingMC(false)
+    }
+  }
+
+  const handleSubmit = () => {
+    if (selected === null || !choices) return
+    setSubmitted(true)
+    if (selected === choices.correct_index) {
+      setCompleted(true)
+      onStart?.()
     }
   }
 
   const handleClose = () => {
     setModalOpen(false)
-    setResult(null)
-    setAnswer("")
+    setSelected(null)
+    setSubmitted(false)
   }
+
+  const isCorrect = submitted && selected === choices?.correct_index
+  const isWrong   = submitted && selected !== choices?.correct_index
 
   return (
     <>
@@ -105,139 +109,143 @@ export function PracticeProblemCard({
             </div>
             <Button size="sm" onClick={handleStart} disabled={completed}
               className={completed ? "pointer-events-none" : ""}>
-              {completed ? "Completed" : "Start"}
+              {completed ? "Completed ✓" : "Start"}
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
 
+          {/* Hint toggle */}
           <div className="rounded-lg border border-border">
             <button onClick={() => setShowHint(!showHint)}
-              className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary/50 transition-colors rounded-t-lg">
-              <div className="flex items-center gap-2"><Lightbulb className="h-4 w-4 text-warning" /><span>Hint</span></div>
+              className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary/50 transition-colors rounded-lg">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-warning" />
+                <span>Hint</span>
+              </div>
               {showHint ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
             </button>
-            {showHint && <div className="px-3 py-2 border-t border-border bg-secondary/30"><p className="text-sm text-muted-foreground">{hint}</p></div>}
-          </div>
-
-          <div className="rounded-lg border border-border">
-            <button onClick={() => setShowOutput(!showOutput)}
-              className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary/50 transition-colors rounded-t-lg">
-              <div className="flex items-center gap-2"><Code className="h-4 w-4 text-primary" /><span>Expected Output</span></div>
-              {showOutput ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-            </button>
-            {showOutput && <div className="px-3 py-2 border-t border-border bg-secondary/30"><code className="text-sm text-foreground font-mono">{expectedOutput}</code></div>}
+            {showHint && (
+              <div className="px-3 pb-3 pt-1 text-sm text-muted-foreground border-t border-border">{hint}</div>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Answer Modal Overlay */}
+      {/* Modal overlay */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-border bg-card shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl flex flex-col max-h-[90vh]">
 
-            {/* Modal Header */}
-            <div className="flex items-start justify-between p-6 border-b border-border gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Badge variant="outline" className={cn("text-xs", config.bg, config.color)}>{difficulty}</Badge>
-                  <Badge variant="secondary" className="text-xs">{topic}</Badge>
-                </div>
-                <h2 className="text-lg font-semibold text-card-foreground leading-snug">{title}</h2>
+            {/* Header */}
+            <div className="p-6 border-b border-border">
+              <div className="flex items-center gap-2 mb-1">
+                <Badge variant="outline" className={cn("text-xs", config.bg, config.color)}>{difficulty}</Badge>
+                <Badge variant="secondary" className="text-xs">{topic}</Badge>
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={handleClose}>
-                <X className="h-4 w-4" />
-              </Button>
+              <h2 className="text-lg font-semibold text-card-foreground mt-2">{title}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{description}</p>
             </div>
 
-            <div className="overflow-y-auto flex-1 p-6 space-y-5">
-              {/* Description */}
-              <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+            {/* Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
 
-              {/* Hint (always visible in modal) */}
-              <div className="rounded-lg bg-warning/5 border border-warning/20 px-4 py-3 flex items-start gap-2">
-                <Lightbulb className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-                <p className="text-sm text-foreground">{hint}</p>
-              </div>
-
-              {/* Answer input — only show if not yet graded */}
-              {!result && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Your Answer</label>
-                  <Textarea
-                    placeholder="Type your answer here..."
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    rows={5}
-                    className="resize-none"
-                  />
+              {loadingMC ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <span className="text-sm">Generating choices...</span>
                 </div>
-              )}
+              ) : choices ? (
+                <>
+                  <p className="text-sm font-medium text-foreground">Choose the best answer:</p>
 
-              {/* Grading Result */}
-              {result && (
-                <div className={cn("rounded-xl border p-5 space-y-4",
-                  result.score >= 70 ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5")}>
+                  <div className="space-y-2">
+                    {choices.choices.map((choice, i) => {
+                      const isSelected  = selected === i
+                      const isThisRight = submitted && i === choices.correct_index
+                      const isThisWrong = submitted && isSelected && i !== choices.correct_index
 
-                  {/* Score header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {result.score >= 70
-                        ? <Trophy className="h-5 w-5 text-success" />
-                        : <AlertCircle className="h-5 w-5 text-destructive" />}
-                      <span className={cn("font-semibold text-lg", result.score >= 70 ? "text-success" : "text-destructive")}>
-                        {result.score >= 70 ? "Great work!" : "Keep practicing!"}
-                      </span>
+                      return (
+                        <button
+                          key={i}
+                          disabled={submitted}
+                          onClick={() => !submitted && setSelected(i)}
+                          className={cn(
+                            "w-full text-left rounded-xl border-2 px-4 py-3 text-sm transition-all flex items-center gap-3",
+                            // Default unselected
+                            !isSelected && !isThisRight && "border-border hover:border-primary/40 hover:bg-primary/5",
+                            // Selected but not submitted
+                            isSelected && !submitted && "border-primary bg-primary/10 text-primary",
+                            // Correct after submit
+                            isThisRight && "border-success bg-success/10 text-success",
+                            // Wrong after submit
+                            isThisWrong && "border-destructive bg-destructive/10 text-destructive",
+                            submitted && !isSelected && !isThisRight && "opacity-50",
+                          )}
+                        >
+                          <span className={cn(
+                            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold border-2",
+                            !isSelected && !isThisRight && !submitted && "border-border text-muted-foreground",
+                            isSelected && !submitted && "border-primary bg-primary text-primary-foreground",
+                            isThisRight && "border-success bg-success text-white",
+                            isThisWrong && "border-destructive bg-destructive text-white",
+                            submitted && !isSelected && !isThisRight && "border-border/50 text-muted-foreground/50",
+                          )}>
+                            {submitted && isThisRight ? <CheckCircle2 className="h-4 w-4" /> :
+                             submitted && isThisWrong ? <XCircle className="h-4 w-4" /> :
+                             letters[i]}
+                          </span>
+                          <span className="flex-1">{choice}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* Result */}
+                  {submitted && (
+                    <div className={cn(
+                      "rounded-xl border p-4 space-y-2",
+                      isCorrect ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"
+                    )}>
+                      <div className="flex items-center gap-2">
+                        {isCorrect
+                          ? <><Trophy className="h-5 w-5 text-success" /><span className="font-semibold text-success">Correct!</span></>
+                          : <><AlertCircle className="h-5 w-5 text-destructive" /><span className="font-semibold text-destructive">Not quite!</span></>
+                        }
+                      </div>
+                      <p className="text-sm text-muted-foreground">{choices.explanation}</p>
+                      {!isCorrect && (
+                        <p className="text-sm text-foreground">
+                          Correct answer: <span className="font-medium text-success">{choices.choices[choices.correct_index]}</span>
+                        </p>
+                      )}
                     </div>
-                    <span className={cn("text-2xl font-bold", result.score >= 70 ? "text-success" : "text-destructive")}>
-                      {result.score}/100
-                    </span>
-                  </div>
-
-                  <Progress value={result.score} className={cn("h-2", result.score >= 70 ? "[&>div]:bg-success" : "[&>div]:bg-destructive")} />
-
-                  {/* AI Feedback */}
-                  <div>
-                    <p className="text-sm font-medium text-foreground mb-1">Feedback</p>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{result.feedback}</p>
-                  </div>
-
-                  {/* Model answer */}
-                  <div className="rounded-lg bg-secondary/50 border border-border p-3">
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Model Answer</p>
-                    <p className="text-sm text-foreground leading-relaxed">{result.model_answer}</p>
-                  </div>
-
-                  {/* Your submitted answer */}
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Your Answer</p>
-                    <p className="text-sm text-foreground/70 italic leading-relaxed">{answer}</p>
-                  </div>
-                </div>
-              )}
+                  )}
+                </>
+              ) : null}
             </div>
 
-            {/* Modal Footer */}
+            {/* Footer */}
             <div className="p-6 border-t border-border flex gap-3">
-              {!result ? (
+              {!submitted ? (
                 <>
                   <Button variant="outline" onClick={handleClose} className="flex-1">Cancel</Button>
-                  <Button onClick={handleSubmit} disabled={!answer.trim() || grading} className="flex-1">
-                    {grading ? (
-                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Grading...</>
-                    ) : (
-                      <><Send className="mr-2 h-4 w-4" /> Submit Answer</>
-                    )}
+                  <Button
+                    onClick={handleSubmit}
+                    disabled={selected === null || loadingMC}
+                    className="flex-1"
+                  >
+                    Submit Answer
                   </Button>
                 </>
               ) : (
                 <>
-                  <Button variant="outline" onClick={() => { setResult(null); setAnswer("") }} className="flex-1">
+                  <Button variant="outline" onClick={() => { setSubmitted(false); setSelected(null) }} className="flex-1">
                     Try Again
                   </Button>
                   <Button onClick={handleClose} className="flex-1">
-                    {result.score >= 70 ? "Completed ✓" : "Close"}
+                    {isCorrect ? "Done ✓" : "Close"}
                   </Button>
                 </>
               )}
