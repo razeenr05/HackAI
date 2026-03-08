@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.webp" alt="MapScribe.ai" width="800"/>
+  <img src="assets/banner.png" alt="MapScribe.ai" width="800"/>
 </div>
 
 # MapScribe.ai
