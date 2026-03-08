@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { X, BookOpen, Code, Link2, ArrowRight, CheckCircle2, PlayCircle, RotateCcw } from "lucide-react"
+import { X, BookOpen, Code, Link2, ArrowRight, CheckCircle2, PlayCircle, RotateCcw, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -24,6 +24,7 @@ interface ConceptPanelProps {
   onMarkStart?:    (nodeId: string) => void
   onMarkComplete?: (nodeId: string) => void
   onMarkUncomplete?: (nodeId: string) => void
+  onMarkWeak?:     (nodeId: string) => void
 }
 
 const statusLabels: Record<ConceptStatus, { label: string; color: string }> = {
@@ -34,7 +35,7 @@ const statusLabels: Record<ConceptStatus, { label: string; color: string }> = {
   locked:        { label: "Locked",      color: "bg-muted text-muted-foreground border-border"         },
 }
 
-export function ConceptPanel({ concept, onClose, onMarkStart, onMarkComplete, onMarkUncomplete }: ConceptPanelProps) {
+export function ConceptPanel({ concept, onClose, onMarkStart, onMarkComplete, onMarkUncomplete, onMarkWeak }: ConceptPanelProps) {
   const router = useRouter()
   if (!concept) return null
 
@@ -43,6 +44,7 @@ export function ConceptPanel({ concept, onClose, onMarkStart, onMarkComplete, on
   const isInProgress  = concept.status === "in-progress"
   const isLocked      = concept.status === "locked"
   const isStartable   = concept.status === "recommended" || concept.status === "weak"
+   const isWeak       = concept.status === "weak"
 
   return (
     <div className="absolute right-4 top-4 z-50 w-96 rounded-xl border border-border bg-card shadow-xl">
@@ -170,6 +172,15 @@ export function ConceptPanel({ concept, onClose, onMarkStart, onMarkComplete, on
                 <CheckCircle2 className="h-4 w-4" /> Mark as Finished
               </Button>
             )}
+            {onMarkWeak && !isWeak && (
+              <Button
+                variant="outline"
+                className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/5"
+                onClick={() => onMarkWeak(concept.id)}
+              >
+                <AlertCircle className="h-4 w-4" /> Mark as Needs Work
+              </Button>
+            )}
             {onMarkUncomplete && (
               <Button variant="outline" className="w-full text-muted-foreground gap-2"
                 onClick={() => onMarkUncomplete(concept.id)}>
@@ -188,6 +199,15 @@ export function ConceptPanel({ concept, onClose, onMarkStart, onMarkComplete, on
             {onMarkComplete && (
               <Button className="w-full gap-2" onClick={() => onMarkComplete(concept.id)}>
                 <CheckCircle2 className="h-4 w-4" /> Mark as Finished
+              </Button>
+            )}
+            {onMarkWeak && !isWeak && (
+              <Button
+                variant="outline"
+                className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/5"
+                onClick={() => onMarkWeak(concept.id)}
+              >
+                <AlertCircle className="h-4 w-4" /> Mark as Needs Work
               </Button>
             )}
           </div>
