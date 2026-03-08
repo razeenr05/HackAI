@@ -22,11 +22,24 @@ class User(Base):
         return f"<User id={self.id!r} email={self.email!r}>"
 
 
+class LearningGoal(Base):
+    """One learning topic per row (e.g. basketball, machine learning). Each has its own mind map and progress."""
+    __tablename__ = "learning_goals"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(String, nullable=False, index=True)
+    goal       = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    nodes = relationship("Node", back_populates="learning_goal", cascade="all, delete-orphan")
+
+
 class Node(Base):
     __tablename__ = "nodes"
 
     id          = Column(String,  primary_key=True, index=True)
     user_id     = Column(String,  nullable=False, index=True)
+    goal_id     = Column(Integer,  ForeignKey("learning_goals.id", ondelete="CASCADE"), nullable=True, index=True)
     label       = Column(String,  nullable=False)
     status      = Column(String,  nullable=False, default="recommended")
     level       = Column(Integer, nullable=False, default=0)
@@ -38,6 +51,7 @@ class Node(Base):
     _practice_problems = Column("practice_problems", Text, nullable=True, default="")
     _related_topics    = Column("related_topics",    Text, nullable=True, default="")
 
+    learning_goal = relationship("LearningGoal", back_populates="nodes")
     incoming_edges = relationship(
         "Edge", foreign_keys="Edge.target_id",
         back_populates="target_node", cascade="all, delete-orphan",
@@ -134,11 +148,12 @@ def get_all_prerequisites(db: Session, node_id: str) -> list:
 
 
 class UserGoal(Base):
-    """Stores the current learning goal string for each user."""
+    """Stores the current (active) learning goal for each user. goal_id points to LearningGoal."""
     __tablename__ = "user_goals"
 
     user_id = Column(String, primary_key=True, index=True)
     goal    = Column(Text, nullable=False, default="")
+    goal_id = Column(Integer, ForeignKey("learning_goals.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class UserActivity(Base):
@@ -151,4 +166,18 @@ class UserActivity(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "activity_date", name="uq_user_activity_date"),
+    )
+
+
+class UserPracticeCompletion(Base):
+    """Tracks which practice problems (node + index) the user has completed. Progress persists per learning goal."""
+    __tablename__ = "user_practice_completion"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    user_id        = Column(String, nullable=False, index=True)
+    node_id        = Column(String, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    problem_index  = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "node_id", "problem_index", name="uq_user_practice"),
     )

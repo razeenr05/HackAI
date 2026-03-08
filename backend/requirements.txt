@@ -10,6 +10,6 @@ alembic>=1.13.0
 bcrypt>=4.0.0
 pyjwt>=2.8.0
 
-# YouTube pipeline — pin transcript API to last stable v0.x to avoid breaking v1.0 API change
+# YouTube pipeline
 yt-dlp>=2024.1.1
-youtube-transcript-api==0.6.2
+youtube-transcript-api>=1.0.3

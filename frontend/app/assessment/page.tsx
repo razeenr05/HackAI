@@ -60,7 +60,9 @@ export default function AssessmentPage() {
         body: JSON.stringify({ user_id: uid, goal: goal.trim(), force: true }),
       })
       if (!res.ok) throw new Error("failed")
+      const data = await res.json()
       localStorage.setItem("hackai_goal", goal.trim())
+      if (data.goal_id != null) localStorage.setItem("hackai_goal_id", String(data.goal_id))
       setSavedGoal(goal.trim())
       setGenStatus("success")
       setTimeout(() => router.push("/mindmap"), 900)

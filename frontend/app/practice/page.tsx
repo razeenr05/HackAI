@@ -11,6 +11,8 @@ import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { Search, Trophy, Target, Flame, Loader2 } from "lucide-react"
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+
 interface Problem {
   id: string
   title: string
@@ -20,6 +22,13 @@ interface Problem {
   hint: string
   expectedOutput: string
   isCompleted: boolean
+  node_id?: string | null
+  problem_index?: number
+}
+
+function getUserId(): string {
+  if (typeof window === "undefined") return "user-1"
+  return localStorage.getItem("hackai_user_id") || "user-1"
 }
 
 function PracticeContent() {
@@ -29,17 +38,42 @@ function PracticeContent() {
   const [problems, setProblems]   = useState<Problem[]>([])
   const [loading, setLoading]     = useState(true)
   const [searchQuery, setSearch]  = useState(topicFilter)
-  const [completed, setCompleted] = useState<Set<string>>(new Set())
+  const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set())
 
   useEffect(() => {
+    const uid = getUserId()
     const url = topicFilter
-      ? `http://localhost:8000/api/practice?topic=${encodeURIComponent(topicFilter)}`
-      : "http://localhost:8000/api/practice"
+      ? `${API_BASE}/api/practice?topic=${encodeURIComponent(topicFilter)}&user_id=${encodeURIComponent(uid)}`
+      : `${API_BASE}/api/practice?user_id=${encodeURIComponent(uid)}`
     fetch(url)
       .then((r) => r.json())
-      .then((data: Problem[]) => { setProblems(data); setLoading(false) })
+      .then((data: Problem[]) => {
+        setProblems(data)
+        const keys = new Set<string>()
+        data.forEach((p) => {
+          if (p.isCompleted && p.node_id != null && p.problem_index != null)
+            keys.add(`${p.node_id}::${p.problem_index}`)
+        })
+        setCompletedKeys(keys)
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
   }, [topicFilter])
+
+  const handleComplete = (id: string) => {
+    setCompletedKeys((prev) => { const s = new Set(prev); s.add(id); return s })
+  }
+
+  const handlePracticeComplete = (nodeId: string, problemIndex: number) => {
+    const key = `${nodeId}::${problemIndex}`
+    setCompletedKeys((prev) => { const s = new Set(prev); s.add(key); return s })
+    const uid = getUserId()
+    fetch(`${API_BASE}/api/practice/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: uid, node_id: nodeId, problem_index: problemIndex }),
+    }).catch(() => {})
+  }
 
   const filtered = problems.filter((p) =>
     !searchQuery ||
@@ -47,12 +81,13 @@ function PracticeContent() {
     p.topic.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const completedCount = completed.size
+  const completedCount = problems.filter((p) => {
+    if (p.node_id != null && p.problem_index != null)
+      return completedKeys.has(`${p.node_id}::${p.problem_index}`) || p.isCompleted
+    return completedKeys.has(p.id)
+  }).length
   const total          = problems.length
   const progress       = total > 0 ? Math.round((completedCount / total) * 100) : 0
-
-  const handleComplete = (id: string) =>
-    setCompleted((prev) => { const s = new Set(prev); s.add(id); return s })
 
   if (loading) return (
     <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
@@ -109,14 +144,22 @@ function PracticeContent() {
       {/* Problems */}
       {filtered.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2">
-          {filtered.map((p) => (
+          {filtered.map((p) => {
+          const key = p.node_id != null && p.problem_index != null
+            ? `${p.node_id}::${p.problem_index}` : p.id
+          const isDone = completedKeys.has(key) || p.isCompleted
+          return (
             <PracticeProblemCard
               key={p.id}
               {...p}
-              isCompleted={completed.has(p.id) || p.isCompleted}
-              onStart={() => handleComplete(p.id)}
+              isCompleted={isDone}
+              onStart={() => handleComplete(key)}
+              node_id={p.node_id}
+              problem_index={p.problem_index ?? 0}
+              onComplete={handlePracticeComplete}
             />
-          ))}
+          )
+        })}
         </div>
       ) : (
         <Card><CardContent className="p-8 text-center">
