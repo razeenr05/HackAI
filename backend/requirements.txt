@@ -1,6 +1,12 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-pydantic==2.7.1
-sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
-python-dotenv==1.0.1
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.1
+sqlalchemy>=2.0.30
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
+alembic>=1.13.0
+
+# YouTube pipeline (Member 3)
+yt-dlp>=2024.1.1
+youtube-transcript-api>=0.6.2
+google-generativeai>=0.7.0

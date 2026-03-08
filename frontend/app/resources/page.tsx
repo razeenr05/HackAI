@@ -1,233 +1,395 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
-import { ResourceCard } from "@/components/cards/resource-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Search, Filter, Play, FileText, GraduationCap,
-  Code, Sparkles, BookOpen, Star,
+  Search,
+  Play,
+  FileText,
+  GraduationCap,
+  Code,
+  Sparkles,
+  BookOpen,
+  Globe,
+  Loader2,
+  AlertCircle,
+  ExternalLink,
+  Clock,
+  ChevronUp,
 } from "lucide-react"
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem,
-  DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
-} from "@/components/ui/dropdown-menu"
 
-const types = ["video", "article", "course", "tutorial", "interactive"]
-const difficulties = ["Beginner", "Intermediate", "Advanced"]
-const typeIcons = {
-  video: Play, article: FileText, course: GraduationCap,
-  tutorial: Code, interactive: Sparkles,
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface Resource {
+  id: string
+  title: string
+  description: string
+  type: string
+  topic: string
+  difficulty: "Beginner" | "Intermediate" | "Advanced"
+  source: string
+  featured: boolean
 }
 
-export default function ResourcesPage() {
-  const searchParams = useSearchParams()
-  const topicParam = searchParams.get("topic") || "All"
+interface Snippet {
+  url: string
+  start_time: number
+  end_time: number
+  reasoning: string
+  video_title: string
+  channel_name: string
+}
 
-  const [resources, setResources] = useState<any[]>([])
-  const [topics, setTopics] = useState<string[]>(["All"])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([])
-  const [selectedDifficulties, setSelectedDifficulties] = useState<string[]>([])
-  const [selectedTopic, setSelectedTopic] = useState(topicParam)
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getVideoId(url: string): string | null {
+  const m = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)
+  return m ? m[1] : null
+}
+
+function buildEmbedUrl(url: string, start: number, end: number): string {
+  const id = getVideoId(url)
+  if (!id) return ""
+  return `https://www.youtube.com/embed/${id}?start=${start}&end=${end}&autoplay=1&rel=0`
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, "0")}`
+}
+
+const typeIcons: Record<string, React.ElementType> = {
+  video:       Play,
+  article:     FileText,
+  course:      GraduationCap,
+  tutorial:    Code,
+  interactive: Sparkles,
+  book:        BookOpen,
+  website:     Globe,
+}
+
+const difficultyColors: Record<string, string> = {
+  Beginner:     "bg-success/10 text-success border-success/30",
+  Intermediate: "bg-warning/10 text-warning border-warning/30",
+  Advanced:     "bg-destructive/10 text-destructive border-destructive/30",
+}
+
+const typeColors: Record<string, string> = {
+  video:       "bg-destructive/10 text-destructive border-destructive/30",
+  article:     "bg-info/10 text-info border-info/30",
+  course:      "bg-primary/10 text-primary border-primary/30",
+  tutorial:    "bg-success/10 text-success border-success/30",
+  interactive: "bg-warning/10 text-warning border-warning/30",
+  book:        "bg-secondary/80 text-foreground border-border",
+  website:     "bg-secondary/80 text-foreground border-border",
+}
+
+// ---------------------------------------------------------------------------
+// ResourceCard — each card has its own snippet fetch + embed
+// ---------------------------------------------------------------------------
+
+function ResourceCard({ resource }: { resource: Resource }) {
+  const [snippet, setSnippet]   = useState<Snippet | null>(null)
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  const normType  = resource.type.toLowerCase()
+  const isVideo   = normType === "video"
+  const TypeIcon  = typeIcons[normType] ?? FileText
+  const typeColor = typeColors[normType] ?? typeColors.article
+
+  // Only called for video cards
+  const fetchSnippet = async () => {
+    if (snippet) { setExpanded((e) => !e); return }
+    setLoading(true)
+    setError(null)
+    try {
+      // Use just the resource title — shorter = better yt-dlp results
+      const res = await fetch(
+        `http://localhost:8000/api/snippet/search?topic=${encodeURIComponent(resource.title)}`
+      )
+      if (!res.ok) throw new Error("Search failed")
+      const data: Snippet = await res.json()
+      setSnippet(data)
+      setExpanded(true)
+    } catch {
+      setError("Could not find a snippet. Try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const openExternal = () => {
+    window.open(
+      `https://www.google.com/search?q=${encodeURIComponent(resource.title)}`,
+      "_blank",
+      "noopener,noreferrer"
+    )
+  }
+
+  // Has Gemini returned real timestamps (not the 0–120 fallback)?
+  const hasRealTimestamps = snippet
+    ? (snippet.start_time > 0 || snippet.end_time > 120)
+    : false
+
+  const embedUrl = snippet
+    ? buildEmbedUrl(snippet.url, snippet.start_time, snippet.end_time)
+    : ""
+
+  return (
+    <Card className="overflow-hidden transition-all hover:shadow-lg hover:border-primary/30">
+      <CardContent className="p-5 space-y-3">
+
+        {/* Type + difficulty badges */}
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className={typeColor}>
+            <TypeIcon className="mr-1 h-3 w-3" />
+            {normType.charAt(0).toUpperCase() + normType.slice(1)}
+          </Badge>
+          <Badge variant="outline" className={difficultyColors[resource.difficulty] ?? difficultyColors.Beginner}>
+            {resource.difficulty}
+          </Badge>
+        </div>
+
+        {/* Title + description */}
+        <div>
+          <h3 className="font-semibold text-card-foreground line-clamp-2">{resource.title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+            {resource.description}
+          </p>
+        </div>
+
+        {/* Topic pill */}
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">{resource.topic}</Badge>
+          <span className="text-xs text-muted-foreground">{resource.source}</span>
+        </div>
+
+        {/* ── VIDEO: embedded snippet player ── */}
+        {isVideo && expanded && snippet && embedUrl && (
+          <div className="space-y-2 pt-1">
+            <div className="rounded-lg overflow-hidden border border-border aspect-video">
+              <iframe
+                src={embedUrl}
+                className="w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+
+            {/* Timestamps — only if Gemini returned real values */}
+            {hasRealTimestamps && (
+              <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-3 py-2">
+                <Clock className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-sm text-foreground">
+                  Best clip:{" "}
+                  <span className="font-medium text-primary">
+                    {formatTime(snippet.start_time)} – {formatTime(snippet.end_time)}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* Gemini reasoning — skip fallback messages */}
+            {snippet.reasoning && !snippet.reasoning.startsWith("Could not") && (
+              <p className="text-xs text-muted-foreground italic">💡 {snippet.reasoning}</p>
+            )}
+
+            {snippet.video_title && (
+              <p className="text-xs text-muted-foreground truncate">
+                📺 {snippet.video_title}
+                {snippet.channel_name && ` · ${snippet.channel_name}`}
+              </p>
+            )}
+
+            <a
+              href={snippet.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Watch full video on YouTube
+            </a>
+          </div>
+        )}
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {/* ── VIDEO action button ── */}
+        {isVideo && (
+          <Button
+            className="w-full"
+            variant={expanded ? "outline" : "default"}
+            onClick={fetchSnippet}
+            disabled={loading}
+          >
+            {loading ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Searching YouTube + AI analysis...</>
+            ) : expanded ? (
+              <><ChevronUp className="mr-2 h-4 w-4" />Hide Snippet</>
+            ) : (
+              <><Play className="mr-2 h-4 w-4" />Find Best Video Snippet</>
+            )}
+          </Button>
+        )}
+
+        {/* NON-VIDEO: open resource externally */}
+        {!isVideo && (
+          <Button className="w-full" variant="outline" onClick={openExternal}>
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Open Resource
+          </Button>
+        )}
+
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+export default function ResourcesPage() {
+  const [resources, setResources]         = useState<Resource[]>([])
+  const [loading, setLoading]             = useState(true)
+  const [error, setError]                 = useState<string | null>(null)
+  const [searchQuery, setSearchQuery]     = useState("")
+  const [selectedTopic, setSelectedTopic] = useState("All")
 
   useEffect(() => {
-    const url = selectedTopic !== "All"
-      ? `http://localhost:8000/api/resources?topic=${encodeURIComponent(selectedTopic)}`
-      : "http://localhost:8000/api/resources"
+    fetch("http://localhost:8000/api/resources")
+      .then((res) => { if (!res.ok) throw new Error("Failed to load resources"); return res.json() })
+      .then((data) => { setResources(data); setLoading(false) })
+      .catch((err) => { setError(err.message); setLoading(false) })
+  }, [])
 
-    setLoading(true)
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        setResources(data)
-        // Build topic list dynamically from what came back
-        const uniqueTopics = ["All", ...Array.from(new Set(data.map((r: any) => r.topic))) as string[]]
-        setTopics(uniqueTopics)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
-  }, [selectedTopic])
-
+  const topics   = ["All", ...Array.from(new Set(resources.map((r) => r.topic))).sort()]
   const filtered = resources.filter((r) => {
     const matchSearch = !searchQuery ||
       r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.description.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchType = selectedTypes.length === 0 || selectedTypes.includes(r.type)
-    const matchDiff = selectedDifficulties.length === 0 || selectedDifficulties.includes(r.difficulty)
-    return matchSearch && matchType && matchDiff
+    const matchTopic = selectedTopic === "All" || r.topic === selectedTopic
+    return matchSearch && matchTopic
   })
 
-  const featured = resources.filter((r) => r.featured)
-  const videoCount = resources.filter((r) => r.type === "video").length
-  const articleCount = resources.filter((r) => r.type === "article").length
-  const courseCount = resources.filter((r) => r.type === "course").length
+  const videoCount   = resources.filter((r) => r.type.toLowerCase() === "video").length
+  const articleCount = resources.filter((r) => r.type.toLowerCase() === "article").length
+  const courseCount  = resources.filter((r) => ["course", "tutorial"].includes(r.type.toLowerCase())).length
+
+  if (loading) return (
+    <AppShell>
+      <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" /><span>Loading your resources...</span>
+      </div>
+    </AppShell>
+  )
+
+  if (error) return (
+    <AppShell>
+      <div className="flex h-64 items-center justify-center gap-3 text-destructive">
+        <AlertCircle className="h-5 w-5" /><span>{error} — make sure the backend is running.</span>
+      </div>
+    </AppShell>
+  )
 
   return (
     <AppShell>
       <div className="space-y-6">
+
+        {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground">Resource Explorer</h1>
-          <p className="text-muted-foreground">Curated learning resources to accelerate your skill development</p>
+          <p className="text-muted-foreground">
+            Click{" "}
+            <span className="font-medium text-primary">"Find Best Video Snippet"</span>
+            {" "}on any card — AI searches YouTube, reads the transcript, and shows you the exact best clip.
+          </p>
         </div>
 
         {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
-          {[
-            { label: "Videos", count: videoCount, icon: Play, color: "bg-destructive/10 text-destructive" },
-            { label: "Articles", count: articleCount, icon: FileText, color: "bg-info/10 text-info" },
-            { label: "Courses", count: courseCount, icon: GraduationCap, color: "bg-primary/10 text-primary" },
-            { label: "Featured", count: featured.length, icon: Star, color: "bg-warning/10 text-warning" },
-          ].map(({ label, count, icon: Icon, color }) => (
-            <Card key={label}>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className={`rounded-lg p-2 ${color.split(" ")[0]}`}>
-                    <Icon className={`h-5 w-5 ${color.split(" ")[1]}`} />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{label}</p>
-                    <p className="text-xl font-bold text-foreground">{loading ? "—" : count}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card><CardContent className="p-4 flex items-center gap-3">
+            <div className="rounded-lg bg-destructive/10 p-2"><Play className="h-5 w-5 text-destructive" /></div>
+            <div><p className="text-sm text-muted-foreground">Videos</p><p className="text-xl font-bold">{videoCount}</p></div>
+          </CardContent></Card>
+          <Card><CardContent className="p-4 flex items-center gap-3">
+            <div className="rounded-lg bg-info/10 p-2"><FileText className="h-5 w-5 text-info" /></div>
+            <div><p className="text-sm text-muted-foreground">Articles</p><p className="text-xl font-bold">{articleCount}</p></div>
+          </CardContent></Card>
+          <Card><CardContent className="p-4 flex items-center gap-3">
+            <div className="rounded-lg bg-primary/10 p-2"><GraduationCap className="h-5 w-5 text-primary" /></div>
+            <div><p className="text-sm text-muted-foreground">Courses</p><p className="text-xl font-bold">{courseCount}</p></div>
+          </CardContent></Card>
         </div>
 
-        {/* Search & Filter */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search resources..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Filter className="mr-2 h-4 w-4" />
-                    Filters
-                    {(selectedTypes.length > 0 || selectedDifficulties.length > 0) && (
-                      <Badge variant="secondary" className="ml-2">
-                        {selectedTypes.length + selectedDifficulties.length}
-                      </Badge>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Resource Type</DropdownMenuLabel>
-                  {types.map((type) => {
-                    const Icon = typeIcons[type as keyof typeof typeIcons]
-                    return (
-                      <DropdownMenuCheckboxItem
-                        key={type}
-                        checked={selectedTypes.includes(type)}
-                        onCheckedChange={() =>
-                          setSelectedTypes((prev) =>
-                            prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
-                          )
-                        }
-                      >
-                        <Icon className="mr-2 h-4 w-4" />
-                        {type.charAt(0).toUpperCase() + type.slice(1)}
-                      </DropdownMenuCheckboxItem>
-                    )
-                  })}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>Difficulty</DropdownMenuLabel>
-                  {difficulties.map((d) => (
-                    <DropdownMenuCheckboxItem
-                      key={d}
-                      checked={selectedDifficulties.includes(d)}
-                      onCheckedChange={() =>
-                        setSelectedDifficulties((prev) =>
-                          prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
-                        )
-                      }
-                    >
-                      {d}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Topic tabs - built dynamically from the API response */}
-        <div className="flex flex-wrap gap-2">
-          {topics.map((topic) => (
-            <Badge
-              key={topic}
-              variant={selectedTopic === topic ? "default" : "secondary"}
-              className="cursor-pointer px-4 py-1.5 text-sm"
-              onClick={() => setSelectedTopic(topic)}
-            >
-              {topic}
-            </Badge>
-          ))}
-        </div>
-
-        {loading ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-48" />)}
+        {/* Search */}
+        <Card><CardContent className="p-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search resources..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
           </div>
-        ) : (
-          <>
-            {/* Featured */}
-            {selectedTopic === "All" && featured.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <Star className="h-5 w-5 text-warning" />
-                  <h2 className="text-lg font-semibold text-foreground">Featured Resources</h2>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {featured.slice(0, 3).map((r) => (
-                    <ResourceCard key={r.id} {...r} onWatch={() => {}} />
-                  ))}
-                </div>
-              </div>
-            )}
+        </CardContent></Card>
 
-            {/* All */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="h-5 w-5 text-primary" />
-                  <h2 className="text-lg font-semibold text-foreground">
-                    {selectedTopic === "All" ? "All Resources" : `${selectedTopic} Resources`}
-                  </h2>
-                </div>
-                <span className="text-sm text-muted-foreground">{filtered.length} resource{filtered.length !== 1 ? "s" : ""}</span>
-              </div>
-              {filtered.length > 0 ? (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {filtered.map((r) => (
-                    <ResourceCard key={r.id} {...r} onWatch={() => {}} />
-                  ))}
-                </div>
-              ) : (
-                <Card>
-                  <CardContent className="p-8 text-center">
-                    <p className="text-muted-foreground">No resources found.</p>
-                  </CardContent>
-                </Card>
-              )}
+        {/* Topic pills */}
+        <div className="flex flex-wrap gap-2">
+          {topics.map((t) => (
+            <button
+              key={t}
+              onClick={() => setSelectedTopic(t)}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                selectedTopic === t
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Grid */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">
+                {selectedTopic === "All" ? "All Resources" : `${selectedTopic} Resources`}
+              </h2>
             </div>
-          </>
-        )}
+            <span className="text-sm text-muted-foreground">{filtered.length} resources</span>
+          </div>
+
+          {filtered.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((r) => <ResourceCard key={r.id} resource={r} />)}
+            </div>
+          ) : (
+            <Card><CardContent className="p-8 text-center">
+              <p className="text-muted-foreground mb-2">No resources found.</p>
+              <Button variant="link" onClick={() => { setSearchQuery(""); setSelectedTopic("All") }}>
+                Clear filters
+              </Button>
+            </CardContent></Card>
+          )}
+        </div>
+
       </div>
     </AppShell>
   )
