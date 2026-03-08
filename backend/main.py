@@ -102,23 +102,26 @@ class PracticeProblem(BaseModel):
     expectedOutput: str
     isCompleted: bool = False
 
+class SnippetResponse(BaseModel):
+    topic: str
+    url: str
+    start_time: int
+    end_time: int
+    reasoning: str
+    video_title: str
+    channel_name: str
+
 
 # ---------------------------------------------------------------------------
 # Helper: auto-layout nodes in a layered tree so they don't overlap
 # ---------------------------------------------------------------------------
 
 def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
-    """
-    Returns a dict of node_id -> (x, y) positions.
-    Groups nodes into layers based on their depth in the prerequisite graph.
-    """
-    # Build adjacency: target -> list of sources (prerequisites)
     prereq_map: dict[str, list[str]] = {}
     all_ids = {n["id"] for n in raw_nodes}
     for e in raw_edges:
         prereq_map.setdefault(e["target"], []).append(e["source"])
 
-    # BFS to assign depth layers
     depth: dict[str, int] = {}
     roots = [n["id"] for n in raw_nodes if n["id"] not in prereq_map or not prereq_map[n["id"]]]
     queue = [(r, 0) for r in roots]
@@ -131,18 +134,15 @@ def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
             if e["source"] == node_id:
                 queue.append((e["target"], d + 1))
 
-    # Any node not reached gets depth = max + 1
     max_depth = max(depth.values()) if depth else 0
     for n in raw_nodes:
         if n["id"] not in depth:
             depth[n["id"]] = max_depth + 1
 
-    # Group by layer
     layers: dict[int, list[str]] = {}
     for node_id, d in depth.items():
         layers.setdefault(d, []).append(node_id)
 
-    # Assign (x, y) — spread each layer horizontally
     positions: dict[str, tuple[float, float]] = {}
     x_gap = 220
     y_gap = 160
@@ -166,32 +166,22 @@ def health_check():
     return {"status": "ok", "message": "HackAI API is running"}
 
 
-# ── Generate graph (the new core endpoint) ───────────────────────────────────
+# ── Generate graph ────────────────────────────────────────────────────────────
 
 @app.post("/api/generate-graph", tags=["mindmap"])
 def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db)):
-    """
-    Takes a user's learning goal, calls the AI to generate a knowledge graph,
-    saves it to the DB, and returns it ready for React Flow.
-    Works for ANY topic: basketball, cooking, ML, music theory — anything.
-    """
     from services.ai_service import generate_knowledge_graph
 
-    # If user already has a graph, skip the API call entirely
     existing = db.query(models.Node).filter(
         models.Node.user_id == payload.user_id
     ).first()
     if existing:
         return {"status": "ok", "goal": payload.goal, "cached": True, "node_count": 0}
 
-    # Ask AI to generate the graph (only called once per user)
     graph = generate_knowledge_graph(payload.goal)
-
-    # Calculate positions using the graph's edge structure
     positions = _layout_nodes(graph["nodes"], graph["edges"])
 
-    # Write nodes to DB
-    node_id_map = {}  # original AI id -> namespaced DB id
+    node_id_map = {}
     for n in graph["nodes"]:
         db_id = f"{payload.user_id}-{n['id']}"
         node_id_map[n["id"]] = db_id
@@ -214,9 +204,8 @@ def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db))
         for r in n.get("resources", []):
             db.add(models.NodeResource(node_id=db_id, title=r["title"], type=r["type"]))
 
-    db.flush()  # get IDs before writing edges
+    db.flush()
 
-    # Write edges to DB
     for e in graph["edges"]:
         src = node_id_map.get(e["source"])
         tgt = node_id_map.get(e["target"])
@@ -233,7 +222,7 @@ def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db))
     }
 
 
-# ── Mind map ─────────────────────────────────────────────────────────────────
+# ── Mind map ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/mindmap/{user_id}", response_model=MindMapResponse, tags=["mindmap"])
 def get_mindmap(user_id: str, db: Session = Depends(get_db)):
@@ -247,7 +236,6 @@ def get_mindmap(user_id: str, db: Session = Depends(get_db)):
     db_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
     db_edges = db.query(models.Edge).all()
 
-    # Only keep edges between this user's nodes
     user_node_ids = {n.id for n in db_nodes}
     db_edges = [e for e in db_edges if e.source_id in user_node_ids and e.target_id in user_node_ids]
 
@@ -373,7 +361,6 @@ def get_dashboard(user_id: str, db: Session = Depends(get_db)):
     total = len(all_nodes)
     completed = len(completed_ids)
     overall_progress = round((completed / total) * 100) if total > 0 else 0
-
     avg_level = round(sum(n.level for n in all_nodes) / total, 1) if total > 0 else 0.0
 
     weak_nodes = [n for n in all_nodes if n.status == "weak" and n.id not in completed_ids]
@@ -418,11 +405,6 @@ def get_dashboard(user_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/resources", response_model=List[Resource], tags=["resources"])
 def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
-    """
-    Builds resources from NodeResource rows in the DB.
-    Topic filter is based on the node labels.
-    TODO (Member 3): enrich with real YouTube snippets.
-    """
     query = db.query(models.NodeResource).join(models.Node)
     if topic:
         query = query.filter(models.Node.label.ilike(f"%{topic}%"))
@@ -437,7 +419,7 @@ def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_
             type=r.type.lower(),
             topic=r.node.label,
             difficulty="Beginner" if r.node.level <= 1 else "Intermediate" if r.node.level <= 3 else "Advanced",
-            source="YouTube" if r.type == "Video" else "Web",
+            source="YouTube" if r.type.lower() == "video" else "Web",
             featured=i < 3,
         ))
     return resources
@@ -447,11 +429,6 @@ def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_
 
 @app.get("/api/practice", response_model=List[PracticeProblem], tags=["practice"])
 def get_practice(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
-    """
-    Builds practice problems from the practice_problems field on each Node.
-    Topic filter is based on node labels.
-    TODO (Member 3): enrich with AI-generated problems.
-    """
     query = db.query(models.Node)
     if topic:
         query = query.filter(models.Node.label.ilike(f"%{topic}%"))
@@ -476,7 +453,29 @@ def get_practice(topic: Optional[str] = Query(None), db: Session = Depends(get_d
     return problems
 
 
-# ── YouTube snippet ───────────────────────────────────────────────────────────
+# ── YouTube snippet by topic string  (used by Resources page) ─────────────────
+#
+#   IMPORTANT: this route MUST be defined before /api/snippet/{node_id}
+#   otherwise FastAPI matches "search" as a node_id value.
+#
+#   GET /api/snippet/search?topic=Italian+Cooking+Basics
+
+@app.get("/api/snippet/search", response_model=SnippetResponse, tags=["snippets"])
+def get_snippet_by_topic(topic: str = Query(..., description="Topic to search YouTube for")):
+    """
+    Search YouTube for a topic, grab a transcript, and use Gemini to identify
+    the best educational snippet.  Called directly by the frontend Resources page.
+    """
+    try:
+        from services.youtube_service import get_video_snippet
+        result = get_video_snippet(topic)
+        return SnippetResponse(topic=topic, **result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── YouTube snippet by node ID ────────────────────────────────────────────────
+#   IMPORTANT: keep this AFTER /api/snippet/search to avoid route conflict.
 
 @app.get("/api/snippet/{node_id}", tags=["snippets"])
 def get_snippet(node_id: str, db: Session = Depends(get_db)):
@@ -491,9 +490,10 @@ def get_snippet(node_id: str, db: Session = Depends(get_db)):
         return {
             "node_id": node_id,
             "topic": topic,
-            "video_id": "placeholder",
+            "url": "",
+            "start_time": 0,
+            "end_time": 0,
+            "reasoning": "",
             "video_title": f"Learn {topic}",
-            "start_seconds": 0,
-            "end_seconds": 0,
-            "thumbnail_url": "",
+            "channel_name": "",
         }
