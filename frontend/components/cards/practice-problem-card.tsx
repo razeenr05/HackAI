@@ -19,6 +19,9 @@ interface PracticeProblemCardProps {
   expectedOutput: string
   isCompleted?: boolean
   onStart?: () => void
+  node_id?: string | null
+  problem_index?: number
+  onComplete?: (nodeId: string, problemIndex: number) => void
 }
 
 interface ChoicesResult {
@@ -35,8 +38,25 @@ const difficultyConfig: Record<Difficulty, { color: string; bg: string }> = {
 
 const letters = ["A", "B", "C", "D"]
 
+function getUserId(): string {
+  if (typeof window === "undefined") return "user-1"
+  return localStorage.getItem("hackai_user_id") || "user-1"
+}
+
+function recordWeakStrike(nodeId: string): number {
+  if (typeof window === "undefined") return 0
+  const key = `mapscribe_weak_strikes_${nodeId}`
+  const current = parseInt(localStorage.getItem(key) || "0", 10) || 0
+  const next = current + 1
+  localStorage.setItem(key, String(next))
+  return next
+}
+
+const WEAK_STRIKE_THRESHOLD = 2
+
 export function PracticeProblemCard({
   id, title, description, difficulty, topic, hint, isCompleted = false, onStart,
+  node_id, problem_index = 0, onComplete,
 }: PracticeProblemCardProps) {
   const [showHint,    setShowHint]    = useState(false)
   const [modalOpen,   setModalOpen]   = useState(false)
@@ -80,6 +100,17 @@ export function PracticeProblemCard({
     if (selected === choices.correct_index) {
       setCompleted(true)
       onStart?.()
+      if (node_id != null && onComplete) onComplete(node_id, problem_index)
+    } else if (node_id) {
+      const strikes = recordWeakStrike(node_id)
+      if (strikes >= WEAK_STRIKE_THRESHOLD) {
+        const userId = getUserId()
+        fetch("http://localhost:8000/api/progress/weak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, node_id }),
+        }).catch(() => {})
+      }
     }
   }
 
