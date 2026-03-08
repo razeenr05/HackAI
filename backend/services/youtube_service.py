@@ -1,9 +1,8 @@
 """
 backend/services/youtube_service.py
 
-Searches YouTube for a topic using yt-dlp (replaces broken youtube-search-python),
-fetches the transcript via youtube-transcript-api, and asks Gemini for the best
-educational start/end timestamps.
+Searches YouTube via yt-dlp, fetches transcript via youtube-transcript-api >=1.0,
+and asks Gemini for the most relevant 60-90 second snippet.
 """
 
 from __future__ import annotations
@@ -15,20 +14,26 @@ import re
 from typing import Optional
 
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY: str        = os.getenv("GEMINI_API_KEY", "")
-LLM_MODEL: str             = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 TRANSCRIPT_CHAR_LIMIT: int = 8_000
-MAX_SEARCH_RESULTS: int    = 5
+MAX_SEARCH_RESULTS: int    = 8
+SNIPPET_MAX_SECONDS: int   = 90
+
+# Gemini models to try in order (only models that actually exist)
+GEMINI_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+]
 
 
 # ---------------------------------------------------------------------------
-# YouTube search — uses yt-dlp, no API key, no proxy issues
+# YouTube search via yt-dlp
 # ---------------------------------------------------------------------------
 
 def _search_youtube(topic: str) -> list[dict]:
@@ -70,30 +75,28 @@ def _search_youtube(topic: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Transcript helpers
+# Transcript — youtube-transcript-api v1.0+
 # ---------------------------------------------------------------------------
 
 def _fetch_transcript(video_id: str) -> Optional[list[dict]]:
-    """Supports both youtube-transcript-api <1.0 (static) and >=1.0 (instance)."""
+    """Fetch English transcript using youtube-transcript-api >=1.0."""
     try:
-        # v1.0+ uses instance API: YouTubeTranscriptApi().fetch(video_id)
+        from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
-        transcript = api.fetch(video_id, languages=["en", "en-US"])
-        # v1.0 returns FetchedTranscript object — convert to list of dicts
-        return [{"start": s.start, "duration": s.duration, "text": s.text} for s in transcript]
-    except AttributeError:
-        pass
+        fetched = api.fetch(video_id, languages=["en", "en-US", "en-GB"])
+        raw = fetched.to_raw_data()
+        if not raw:
+            return None
+        return [
+            {
+                "start": float(seg.get("start", 0)),
+                "duration": float(seg.get("duration", 0)),
+                "text": str(seg.get("text", "")).strip(),
+            }
+            for seg in raw
+        ]
     except Exception as exc:
-        logger.warning("Transcript v1.0 error for %s: %s", video_id, exc)
-
-    try:
-        # v0.x uses class method: YouTubeTranscriptApi.get_transcript(video_id)
-        return YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US"])
-    except (NoTranscriptFound, TranscriptsDisabled) as exc:
-        logger.warning("No transcript for %s: %s", video_id, exc)
-        return None
-    except Exception as exc:
-        logger.error("Transcript error for %s: %s", video_id, exc)
+        logger.warning("Transcript error for %s: %s", video_id, exc)
         return None
 
 
@@ -101,7 +104,11 @@ def _transcript_to_text(transcript: list[dict]) -> str:
     lines: list[str] = []
     total = 0
     for seg in transcript:
-        line = f"[{int(seg.get('start', 0))}s] {seg.get('text', '').replace(chr(10), ' ').strip()}"
+        try:
+            start_int = int(float(seg.get("start", 0)))
+        except (TypeError, ValueError):
+            start_int = 0
+        line = f"[{start_int}s] {seg.get('text', '').replace(chr(10), ' ').strip()}"
         total += len(line)
         if total > TRANSCRIPT_CHAR_LIMIT:
             lines.append("... (truncated)")
@@ -111,25 +118,28 @@ def _transcript_to_text(transcript: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Gemini timestamp picker
+# Gemini — pick best 60-90s snippet
 # ---------------------------------------------------------------------------
 
 def _ask_gemini_for_timestamps(topic: str, video_title: str, transcript_text: str) -> dict:
     import urllib.request, urllib.error
 
     if not GEMINI_API_KEY:
-        return {"start_time": 0, "end_time": 120, "reasoning": "No Gemini API key"}
+        return {"start_time": 0, "end_time": SNIPPET_MAX_SECONDS, "reasoning": "No Gemini API key"}
 
     prompt = (
-        "You are an educational content analyst. "
-        "Given a YouTube transcript with timestamps in seconds, "
-        "find the single best 2-4 minute continuous segment where the speaker directly explains the topic. "
-        "Look for where the core concept is introduced and explained clearly. "
-        "Reply ONLY with a raw JSON object — no markdown, no code fences, no extra text:\n"
-        '{"start_time": 120, "end_time": 360, "reasoning": "example"}\n\n'
-        f"Topic to find: {topic}\n"
+        "You are an educational video analyst. "
+        "Given a YouTube transcript with timestamps in [Nseconds] format, "
+        "find the single most relevant continuous snippet (60 to 90 seconds max) "
+        "where the speaker directly teaches or explains the topic below. "
+        "The start_time is the exact second the user should jump to for maximum relevance. "
+        "The end_time MUST be no more than 90 seconds after start_time. "
+        "Prefer the segment where the core concept is introduced and explained clearly.\n\n"
+        "Reply ONLY with a raw JSON object — no markdown, no code fences:\n"
+        '{"start_time": <seconds>, "end_time": <seconds>, "reasoning": "brief explanation"}\n\n'
+        f"Topic: {topic}\n"
         f"Video title: {video_title}\n\n"
-        f"Transcript (format: [Nseconds] text):\n{transcript_text}"
+        f"Transcript:\n{transcript_text}"
     )
 
     body = json.dumps({
@@ -137,8 +147,7 @@ def _ask_gemini_for_timestamps(topic: str, video_title: str, transcript_text: st
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300}
     }).encode("utf-8")
 
-    models = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
-    for model in models:
+    for model in GEMINI_MODELS:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         req = urllib.request.Request(url, data=body,
             headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}, method="POST")
@@ -147,24 +156,46 @@ def _ask_gemini_for_timestamps(topic: str, video_title: str, transcript_text: st
                 data = json.loads(resp.read().decode("utf-8"))
             raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
             raw = re.sub(r"```(?:json)?|```", "", raw).strip()
-            parsed = json.loads(raw)
-            start  = int(parsed.get("start_time", 0))
-            end    = int(parsed.get("end_time", start + 180))
-            if end <= start:      end = start + 180
-            if end - start > 600: end = start + 600
-            if start < 0:         start = 0
-            return {"start_time": start, "end_time": end, "reasoning": str(parsed.get("reasoning", ""))}
+            parsed = None
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                # Truncated or malformed JSON (e.g. "Unterminated string") — try to salvage start_time/end_time
+                start_m = re.search(r'"start_time"\s*:\s*(\d+)', raw)
+                end_m   = re.search(r'"end_time"\s*:\s*(\d+)', raw)
+                if start_m and end_m:
+                    start = max(0, int(start_m.group(1)))
+                    end   = int(end_m.group(1))
+                    if end <= start:
+                        end = start + SNIPPET_MAX_SECONDS
+                    if end - start > SNIPPET_MAX_SECONDS:
+                        end = start + SNIPPET_MAX_SECONDS
+                    return {"start_time": start, "end_time": end, "reasoning": "Parsed from partial response"}
+                if start_m:
+                    start = max(0, int(start_m.group(1)))
+                    return {"start_time": start, "end_time": start + SNIPPET_MAX_SECONDS, "reasoning": "Parsed start from partial response"}
+            if parsed is not None:
+                start  = max(0, int(parsed.get("start_time", 0)))
+                end    = int(parsed.get("end_time", start + SNIPPET_MAX_SECONDS))
+                if end <= start:
+                    end = start + SNIPPET_MAX_SECONDS
+                if end - start > SNIPPET_MAX_SECONDS:
+                    end = start + SNIPPET_MAX_SECONDS
+                return {"start_time": start, "end_time": end, "reasoning": str(parsed.get("reasoning", ""))}
         except urllib.error.HTTPError as e:
             logger.warning("Gemini %s failed: %s", model, e.code)
             continue
-        except Exception as exc:
-            logger.error("Gemini timestamp error: %s", exc)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            logger.warning("Gemini timestamp parse (%s): %s", model, exc)
             continue
-    return {"start_time": 0, "end_time": 180, "reasoning": "Could not determine best segment"}
+        except Exception as exc:
+            logger.error("Gemini timestamp error (%s): %s", model, exc)
+            continue
+    return {"start_time": 0, "end_time": SNIPPET_MAX_SECONDS, "reasoning": "Could not determine best segment"}
 
 
 # ---------------------------------------------------------------------------
-# Pick best candidate
+# Pick best candidate (first video with a transcript)
 # ---------------------------------------------------------------------------
 
 def _pick_best_candidate(candidates: list[dict]) -> Optional[dict]:
@@ -175,7 +206,7 @@ def _pick_best_candidate(candidates: list[dict]) -> Optional[dict]:
         if isinstance(vid, re.Match):
             vid = vid.group(1)
         transcript = _fetch_transcript(vid)
-        if transcript is not None:
+        if transcript is not None and len(transcript) > 0:
             c["transcript"] = transcript
             c["video_id"]   = vid
             return c
@@ -220,7 +251,7 @@ def _placeholder(topic: str, url: str = "") -> dict:
     return {
         "url":          url or "https://www.youtube.com/results?search_query=" + topic.replace(" ", "+"),
         "start_time":   0,
-        "end_time":     120,
+        "end_time":     SNIPPET_MAX_SECONDS,
         "reasoning":    f"Could not find a snippet for '{topic}'.",
         "video_title":  "",
         "channel_name": "",
