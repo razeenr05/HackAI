@@ -93,6 +93,16 @@ class GradeAnswerRequest(BaseModel):
     topic: str
     user_answer: str
 
+class MultipleChoiceRequest(BaseModel):
+    question: str
+    topic: str
+
+class CheckAnswerRequest(BaseModel):
+    question: str
+    topic: str
+    selected_answer: str
+    correct_answer: str
+
 class Resource(BaseModel):
     id: str
     title: str
@@ -117,37 +127,48 @@ class PracticeProblem(BaseModel):
 
 
 def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
+    """Top-to-bottom learning path layout. Nodes flow from foundations to advanced."""
     prereq_map: dict[str, list[str]] = {}
+    children_map: dict[str, list[str]] = {}
     for e in raw_edges:
         prereq_map.setdefault(e["target"], []).append(e["source"])
+        children_map.setdefault(e["source"], []).append(e["target"])
+
     depth: dict[str, int] = {}
     roots = [n["id"] for n in raw_nodes if n["id"] not in prereq_map or not prereq_map[n["id"]]]
+    if not roots:
+        roots = [raw_nodes[0]["id"]] if raw_nodes else []
     queue = [(r, 0) for r in roots]
     while queue:
         node_id, d = queue.pop(0)
-        if node_id in depth:
+        if node_id in depth and depth[node_id] >= d:
             continue
         depth[node_id] = d
-        for e in raw_edges:
-            if e["source"] == node_id:
-                queue.append((e["target"], d + 1))
+        for child in children_map.get(node_id, []):
+            queue.append((child, d + 1))
+
     max_depth = max(depth.values()) if depth else 0
     for n in raw_nodes:
         if n["id"] not in depth:
             depth[n["id"]] = max_depth + 1
+
     layers: dict[int, list[str]] = {}
     for node_id, d in depth.items():
         layers.setdefault(d, []).append(node_id)
+
     positions: dict[str, tuple[float, float]] = {}
-    x_gap = 220
-    y_gap = 160
+    X_GAP = 260
+    Y_GAP = 200
+    CENTER_X = 500
+
     for layer_idx, node_ids in sorted(layers.items()):
         count = len(node_ids)
-        total_width = (count - 1) * x_gap
+        total_width = (count - 1) * X_GAP
         for i, node_id in enumerate(node_ids):
-            x = i * x_gap - total_width / 2 + 400
-            y = layer_idx * y_gap + 50
+            x = CENTER_X + i * X_GAP - total_width / 2
+            y = layer_idx * Y_GAP + 80
             positions[node_id] = (x, y)
+
     return positions
 
 
@@ -302,6 +323,18 @@ def complete_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
     return ProgressResponse(user_id=payload.user_id, completed_node_ids=[r.node_id for r in completed])
 
 
+
+@app.post("/api/progress/start", tags=["progress"])
+def start_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
+    """Mark a node as in-progress."""
+    node = db.query(models.Node).filter(models.Node.id == payload.node_id).first()
+    if node:
+        node.status = "in-progress"
+        db.commit()
+    completed = db.query(models.UserProgress).filter(models.UserProgress.user_id == payload.user_id).all()
+    return ProgressResponse(user_id=payload.user_id, completed_node_ids=[r.node_id for r in completed])
+
+
 @app.delete("/api/progress/uncomplete", response_model=ProgressResponse, tags=["progress"])
 def uncomplete_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
     """Remove a completion record so a node can be marked uncomplete."""
@@ -320,6 +353,63 @@ def check_unlock(user_id: str, node_id: str, db: Session = Depends(get_db)):
     prereqs = models.get_all_prerequisites(db, node_id)
     missing = [p.label for p in prereqs if p.id not in completed_ids]
     return UnlockCheckResponse(node_id=node_id, is_unlocked=len(missing) == 0, missing_prerequisites=missing)
+
+
+@app.post("/api/generate-choices", tags=["practice"])
+def generate_choices(payload: MultipleChoiceRequest):
+    """Generate 4 multiple-choice options for a practice question, with the correct answer marked."""
+    import urllib.request, urllib.error
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+
+    prompt = f"""You are creating a multiple-choice quiz question.
+
+Topic: {payload.topic}
+Question: {payload.question}
+
+Generate exactly 4 answer choices. One must be correct, three must be plausible but wrong.
+Reply ONLY with valid JSON, no markdown:
+{{
+  "choices": ["choice A", "choice B", "choice C", "choice D"],
+  "correct_index": <0-3>,
+  "explanation": "<one sentence explaining why the correct answer is right>"
+}}"""
+
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4}
+    }).encode("utf-8")
+
+    models_list = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    for model in models_list:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        req = urllib.request.Request(url, data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, method="POST")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
+            parsed = json.loads(text.strip())
+            return {
+                "choices": parsed["choices"],
+                "correct_index": int(parsed["correct_index"]),
+                "explanation": parsed.get("explanation", "")
+            }
+        except urllib.error.HTTPError as e:
+            continue
+        except Exception:
+            continue
+    # Fallback
+    return {
+        "choices": ["Option A", "Option B", "Option C", "Option D"],
+        "correct_index": 0,
+        "explanation": "Could not generate choices."
+    }
 
 
 @app.post("/api/grade-answer", tags=["practice"])
@@ -347,9 +437,9 @@ Be fair but accurate. Score above 70 means the student demonstrated understandin
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3}
     }).encode("utf-8")
-    models = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    models_list = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
     last_err = ""
-    for model in models:
+    for model in models_list:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         req = urllib.request.Request(url, data=body,
             headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, method="POST")

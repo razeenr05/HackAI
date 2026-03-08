@@ -42,7 +42,7 @@ export default function LearnPage() {
       const res = await fetch("http://localhost:8000/api/generate-graph", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: USER_ID, goal: trimmed }),
+        body: JSON.stringify({ user_id: USER_ID, goal: trimmed, force: true }),
       })
 
       if (!res.ok) {
@@ -63,16 +63,16 @@ export default function LearnPage() {
 
   return (
     <AppShell>
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <div className="w-full max-w-2xl space-y-8">
+    <div className="min-h-screen bg-background bg-page-gradient flex items-center justify-center p-6">
+      <div className="w-full max-w-2xl space-y-8 stagger-reveal">
 
         {/* Header */}
         <div className="text-center space-y-3">
           <div className="flex items-center justify-center gap-2 mb-4">
             <Sparkles className="h-8 w-8 text-primary" />
-            <span className="text-3xl font-bold text-foreground">HackAI</span>
+            <span className="text-3xl font-bold text-foreground tracking-tight">HackAI</span>
           </div>
-          <h1 className="text-4xl font-bold text-foreground leading-tight">
+          <h1 className="text-4xl font-bold text-foreground leading-tight tracking-tight">
             What do you want to learn?
           </h1>
           <p className="text-muted-foreground text-lg">
@@ -81,7 +81,7 @@ export default function LearnPage() {
         </div>
 
         {/* Input */}
-        <Card>
+        <Card className="border-border/80 shadow-lg shadow-primary/5">
           <CardContent className="p-6 space-y-4">
             <div className="flex gap-3">
               <Input
