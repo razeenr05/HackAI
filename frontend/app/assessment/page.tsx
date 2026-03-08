@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { SkillSlider } from "@/components/skill-slider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -8,7 +9,17 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { CheckCircle2, Save, RotateCcw, Sparkles } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  CheckCircle2,
+  Save,
+  RotateCcw,
+  Sparkles,
+  Brain,
+  ArrowRight,
+  Loader2,
+  Trash2,
+} from "lucide-react"
 
 const categories = {
   fundamentals: {
@@ -47,6 +58,65 @@ const categories = {
 }
 
 export default function AssessmentPage() {
+  const router = useRouter()
+
+  // ── Learning Goal State ────────────────────────────────────────────────────
+  const [goal, setGoal] = useState("")
+  const [savedGoal, setSavedGoal] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState<string | null>(null)
+  const [generateSuccess, setGenerateSuccess] = useState(false)
+
+  // Load any previously saved goal from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("hackai_goal")
+    if (stored) setSavedGoal(stored)
+  }, [])
+
+  const handleGenerateGraph = async () => {
+    if (!goal.trim()) return
+    setGenerating(true)
+    setGenerateError(null)
+    setGenerateSuccess(false)
+
+    const userId = localStorage.getItem("hackai_user_id") || "user-1"
+    localStorage.setItem("hackai_user_id", userId)
+
+    try {
+      const res = await fetch("http://localhost:8000/api/generate-graph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, goal: goal.trim() }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || "Failed to generate learning graph")
+      }
+
+      // Save goal so the page shows it after refresh
+      localStorage.setItem("hackai_goal", goal.trim())
+      setSavedGoal(goal.trim())
+      setGenerateSuccess(true)
+      setGoal("")
+
+      // Give brief feedback then navigate to the mind map
+      setTimeout(() => router.push("/mindmap"), 1200)
+    } catch (e: any) {
+      setGenerateError(e.message || "Something went wrong. Make sure the backend is running.")
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleClearGoal = () => {
+    localStorage.removeItem("hackai_goal")
+    setSavedGoal(null)
+    setGenerateSuccess(false)
+    setGenerateError(null)
+  }
+
+  // ── Skill Assessment State ─────────────────────────────────────────────────
   const [skills, setSkills] = useState<Record<string, number>>(() => {
     const initial: Record<string, number> = {}
     Object.values(categories).forEach((category) => {
@@ -91,7 +161,7 @@ export default function AssessmentPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Skill Assessment</h1>
             <p className="text-muted-foreground">
-              Rate your knowledge level for each concept to personalize your learning path
+              Tell us what you want to learn, then rate your current knowledge to personalise your path
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -114,6 +184,111 @@ export default function AssessmentPage() {
             </Button>
           </div>
         </div>
+
+        {/* ── LEARNING GOAL SECTION ── */}
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">What do you want to learn?</CardTitle>
+            </div>
+            <CardDescription>
+              Describe your learning goal and we&apos;ll generate a personalised knowledge map for you.
+              Be as specific or as broad as you like — e.g. &quot;Learn Python for data science&quot;,
+              &quot;Understand how basketball plays work&quot;, &quot;Get started with music theory&quot;.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            {/* Show existing saved goal */}
+            {savedGoal && (
+              <div className="flex items-start justify-between rounded-lg border border-success/30 bg-success/10 px-4 py-3">
+                <div>
+                  <p className="text-xs font-medium text-success mb-1">Current learning goal</p>
+                  <p className="text-sm font-semibold text-foreground">{savedGoal}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Your mind map has been generated.{" "}
+                    <span
+                      className="text-primary underline cursor-pointer"
+                      onClick={() => router.push("/mindmap")}
+                    >
+                      View it here →
+                    </span>
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                  onClick={handleClearGoal}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+
+            {/* Input for new goal */}
+            {!savedGoal && (
+              <>
+                <Textarea
+                  placeholder="e.g. I want to learn machine learning from scratch, starting with Python and statistics..."
+                  value={goal}
+                  onChange={(e) => {
+                    setGoal(e.target.value)
+                    setGenerateError(null)
+                    setGenerateSuccess(false)
+                  }}
+                  className="min-h-[100px] resize-none"
+                  disabled={generating}
+                />
+
+                {generateError && (
+                  <p className="text-sm text-destructive">{generateError}</p>
+                )}
+
+                {generateSuccess && (
+                  <div className="flex items-center gap-2 text-sm text-success">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Learning map generated! Redirecting to Mind Map...</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {goal.length} characters — be descriptive for best results
+                  </p>
+                  <Button
+                    onClick={handleGenerateGraph}
+                    disabled={!goal.trim() || generating}
+                    className="gap-2"
+                  >
+                    {generating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generating your map...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        Generate Learning Map
+                        <ArrowRight className="h-4 w-4" />
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* Allow updating the goal even if one exists */}
+            {savedGoal && (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Want to start over with a different topic? Clear the goal above then enter a new one.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Progress Overview */}
         <Card>
@@ -189,13 +364,15 @@ export default function AssessmentPage() {
           <CardContent>
             <div className="grid gap-3 md:grid-cols-5">
               {[
-                { level: 0, label: "None", color: "bg-muted text-muted-foreground" },
-                { level: 1, label: "Basic", color: "bg-destructive/10 text-destructive" },
-                { level: 2, label: "Developing", color: "bg-warning/10 text-warning" },
+                { level: 0, label: "None",         color: "bg-muted text-muted-foreground" },
+                { level: 1, label: "Basic",        color: "bg-destructive/10 text-destructive" },
+                { level: 2, label: "Developing",   color: "bg-warning/10 text-warning" },
                 { level: 3, label: "Intermediate", color: "bg-info/10 text-info" },
-                { level: 4, label: "Proficient", color: "bg-success/10 text-success" },
+                { level: 4, label: "Proficient",   color: "bg-success/10 text-success" },
               ].map((item) => {
-                const count = Object.values(skills).filter((v) => v === item.level || (item.level === 4 && v === 5)).length
+                const count = Object.values(skills).filter(
+                  (v) => v === item.level || (item.level === 4 && v === 5)
+                ).length
                 return (
                   <div
                     key={item.level}

@@ -1,6 +1,6 @@
 "use client"
 
-import { Play, ExternalLink, Clock, Tag } from "lucide-react"
+import { Play, ExternalLink, Clock, Tag, BookOpen, Globe } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -8,28 +8,38 @@ import { Badge } from "@/components/ui/badge"
 interface ResourceCardProps {
   title: string
   description: string
-  type: "video" | "article" | "course" | "tutorial" | "interactive"
+  type: string          // widened to string — backend can send any casing/value
   thumbnail?: string
   timestamp?: string
   duration?: string
   topic: string
   difficulty: "Beginner" | "Intermediate" | "Advanced"
   source?: string
+  featured?: boolean
   onWatch?: () => void
 }
 
-const typeConfig = {
-  video: { icon: Play, color: "bg-destructive/10 text-destructive border-destructive/30" },
-  article: { icon: ExternalLink, color: "bg-info/10 text-info border-info/30" },
-  course: { icon: Tag, color: "bg-primary/10 text-primary border-primary/30" },
-  tutorial: { icon: ExternalLink, color: "bg-success/10 text-success border-success/30" },
-  interactive: { icon: Play, color: "bg-warning/10 text-warning border-warning/30" },
+const typeConfig: Record<string, { icon: React.ElementType; color: string }> = {
+  video:       { icon: Play,        color: "bg-destructive/10 text-destructive border-destructive/30" },
+  article:     { icon: ExternalLink, color: "bg-info/10 text-info border-info/30" },
+  course:      { icon: Tag,         color: "bg-primary/10 text-primary border-primary/30" },
+  tutorial:    { icon: ExternalLink, color: "bg-success/10 text-success border-success/30" },
+  interactive: { icon: Play,        color: "bg-warning/10 text-warning border-warning/30" },
+  book:        { icon: BookOpen,    color: "bg-secondary/80 text-foreground border-border" },
+  website:     { icon: Globe,       color: "bg-secondary/80 text-foreground border-border" },
 }
 
-const difficultyColors = {
-  Beginner: "bg-success/10 text-success border-success/30",
+// Fallback for any unknown type the backend sends
+const fallbackConfig = { icon: ExternalLink, color: "bg-secondary/80 text-foreground border-border" }
+
+function normaliseType(raw: string): string {
+  return raw?.toLowerCase().trim() ?? "article"
+}
+
+const difficultyColors: Record<string, string> = {
+  Beginner:     "bg-success/10 text-success border-success/30",
   Intermediate: "bg-warning/10 text-warning border-warning/30",
-  Advanced: "bg-destructive/10 text-destructive border-destructive/30",
+  Advanced:     "bg-destructive/10 text-destructive border-destructive/30",
 }
 
 export function ResourceCard({
@@ -44,15 +54,18 @@ export function ResourceCard({
   source,
   onWatch,
 }: ResourceCardProps) {
-  const TypeIcon = typeConfig[type].icon
+  const normalisedType = normaliseType(type)
+  const config = typeConfig[normalisedType] ?? fallbackConfig
+  const TypeIcon = config.icon
+  const isVideo = normalisedType === "video"
 
   return (
     <Card className="group overflow-hidden transition-all hover:shadow-lg hover:border-primary/30">
       {/* Thumbnail Section for Videos */}
-      {type === "video" && (
+      {isVideo && (
         <div className="relative aspect-video bg-gradient-to-br from-primary/20 via-accent/20 to-secondary overflow-hidden">
           {thumbnail && (
-            <div 
+            <div
               className="absolute inset-0 bg-cover bg-center"
               style={{ backgroundImage: `url(${thumbnail})` }}
             />
@@ -71,16 +84,16 @@ export function ResourceCard({
         </div>
       )}
 
-      <CardContent className={type === "video" ? "p-4" : "p-5"}>
+      <CardContent className={isVideo ? "p-4" : "p-5"}>
         <div className="space-y-3">
           {/* Header with badges */}
           <div className="flex items-start justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className={typeConfig[type].color}>
+              <Badge variant="outline" className={config.color}>
                 <TypeIcon className="mr-1 h-3 w-3" />
-                {type.charAt(0).toUpperCase() + type.slice(1)}
+                {normalisedType.charAt(0).toUpperCase() + normalisedType.slice(1)}
               </Badge>
-              <Badge variant="outline" className={difficultyColors[difficulty]}>
+              <Badge variant="outline" className={difficultyColors[difficulty] ?? difficultyColors.Beginner}>
                 {difficulty}
               </Badge>
             </div>
@@ -118,7 +131,7 @@ export function ResourceCard({
 
           {/* Action Button */}
           <Button className="w-full" onClick={onWatch}>
-            {type === "video" ? (
+            {isVideo ? (
               <>
                 <Play className="mr-2 h-4 w-4" />
                 Watch Now
