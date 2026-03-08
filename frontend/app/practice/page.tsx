@@ -1,203 +1,151 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { PracticeProblemCard } from "@/components/cards/practice-problem-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Filter, Shuffle, Trophy, Target, Flame } from "lucide-react"
-import {
-  DropdownMenu, DropdownMenuContent,
-  DropdownMenuCheckboxItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { Search, Trophy, Target, Flame, Loader2 } from "lucide-react"
 
-export default function PracticePage() {
-  const searchParams = useSearchParams()
-  const topicParam = searchParams.get("topic") || ""
+interface Problem {
+  id: string
+  title: string
+  description: string
+  difficulty: "Easy" | "Medium" | "Hard"
+  topic: string
+  hint: string
+  expectedOutput: string
+  isCompleted: boolean
+}
 
-  const [problems, setProblems] = useState<any[]>([])
-  const [topics, setTopics] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selectedTopics, setSelectedTopics] = useState<string[]>(
-    topicParam ? [topicParam] : []
-  )
-  const [activeTab, setActiveTab] = useState("all")
+function PracticeContent() {
+  const searchParams  = useSearchParams()
+  const topicFilter   = searchParams.get("topic") || ""
+
+  const [problems, setProblems]   = useState<Problem[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [searchQuery, setSearch]  = useState(topicFilter)
+  const [completed, setCompleted] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    const url = topicParam
-      ? `http://localhost:8000/api/practice?topic=${encodeURIComponent(topicParam)}`
+    const url = topicFilter
+      ? `http://localhost:8000/api/practice?topic=${encodeURIComponent(topicFilter)}`
       : "http://localhost:8000/api/practice"
-
     fetch(url)
       .then((r) => r.json())
-      .then((data) => {
-        setProblems(data)
-        const uniqueTopics = Array.from(new Set(data.map((p: any) => p.topic))) as string[]
-        setTopics(uniqueTopics)
-        setLoading(false)
-      })
+      .then((data: Problem[]) => { setProblems(data); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [])
+  }, [topicFilter])
 
-  const completedCount = problems.filter((p) => p.isCompleted).length
-  const totalCount = problems.length
-  const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
+  const filtered = problems.filter((p) =>
+    !searchQuery ||
+    p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.topic.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
-  const filtered = problems.filter((p) => {
-    if (activeTab === "completed" && !p.isCompleted) return false
-    if (activeTab === "pending" && p.isCompleted) return false
-    if (selectedTopics.length > 0 && !selectedTopics.includes(p.topic)) return false
-    return true
-  })
+  const completedCount = completed.size
+  const total          = problems.length
+  const progress       = total > 0 ? Math.round((completedCount / total) * 100) : 0
 
-  const toggleTopic = (topic: string) =>
-    setSelectedTopics((prev) =>
-      prev.includes(topic) ? prev.filter((t) => t !== topic) : [...prev, topic]
-    )
+  const handleComplete = (id: string) =>
+    setCompleted((prev) => { const s = new Set(prev); s.add(id); return s })
+
+  if (loading) return (
+    <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin" /><span>Loading practice problems...</span>
+    </div>
+  )
 
   return (
-    <AppShell>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Practice Problems</h1>
-            <p className="text-muted-foreground">Sharpen your skills with curated challenges</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Filter className="mr-2 h-4 w-4" />
-                  Filter
-                  {selectedTopics.length > 0 && (
-                    <Badge variant="secondary" className="ml-2">{selectedTopics.length}</Badge>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                {topics.map((topic) => (
-                  <DropdownMenuCheckboxItem
-                    key={topic}
-                    checked={selectedTopics.includes(topic)}
-                    onCheckedChange={() => toggleTopic(topic)}
-                  >
-                    {topic}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const pending = problems.filter((p) => !p.isCompleted)
-                if (pending.length > 0) {
-                  const random = pending[Math.floor(Math.random() * pending.length)]
-                  setSelectedTopics([random.topic])
-                }
-              }}
-            >
-              <Shuffle className="mr-2 h-4 w-4" />
-              Random
-            </Button>
-          </div>
-        </div>
-
-        {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-primary/10 p-2">
-                  <Target className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Progress</p>
-                  <p className="text-xl font-bold text-foreground">{loading ? "—" : `${completedCount}/${totalCount}`}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-success/10 p-2">
-                  <Trophy className="h-5 w-5 text-success" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Completed</p>
-                  <p className="text-xl font-bold text-foreground">{loading ? "—" : completedCount}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-warning/10 p-2">
-                  <Flame className="h-5 w-5 text-warning" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Topics</p>
-                  <p className="text-xl font-bold text-foreground">{loading ? "—" : topics.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Completion</p>
-                  <p className="text-sm font-medium text-foreground">{Math.round(progress)}%</p>
-                </div>
-                <Progress value={progress} className="h-2" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {loading ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-48" />)}
-          </div>
-        ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList>
-              <TabsTrigger value="all">All Problems</TabsTrigger>
-              <TabsTrigger value="pending">Pending</TabsTrigger>
-              <TabsTrigger value="completed">Completed</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value={activeTab} className="mt-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                {filtered.map((p) => (
-                  <PracticeProblemCard
-                    key={p.id}
-                    {...p}
-                    onStart={() => console.log(`Starting problem ${p.id}`)}
-                  />
-                ))}
-              </div>
-              {filtered.length === 0 && (
-                <Card>
-                  <CardContent className="p-8 text-center">
-                    <p className="text-muted-foreground">No problems match your filters.</p>
-                    <Button variant="link" onClick={() => { setSelectedTopics([]); setActiveTab("all") }}>
-                      Clear filters
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-            </TabsContent>
-          </Tabs>
-        )}
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Practice Problems</h1>
+        <p className="text-muted-foreground">
+          {topicFilter ? `Showing problems for: ${topicFilter}` : "Sharpen your skills with these exercises"}
+        </p>
       </div>
+
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card><CardContent className="p-4 flex items-center gap-3">
+          <div className="rounded-lg bg-success/10 p-2"><Trophy className="h-5 w-5 text-success" /></div>
+          <div><p className="text-sm text-muted-foreground">Completed</p>
+               <p className="text-xl font-bold">{completedCount}/{total}</p></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4 flex items-center gap-3">
+          <div className="rounded-lg bg-primary/10 p-2"><Target className="h-5 w-5 text-primary" /></div>
+          <div><p className="text-sm text-muted-foreground">Progress</p>
+               <p className="text-xl font-bold">{progress}%</p></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4 flex items-center gap-3">
+          <div className="rounded-lg bg-warning/10 p-2"><Flame className="h-5 w-5 text-warning" /></div>
+          <div><p className="text-sm text-muted-foreground">Topics</p>
+               <p className="text-xl font-bold">{new Set(problems.map((p) => p.topic)).size}</p></div>
+        </CardContent></Card>
+      </div>
+
+      {/* Progress bar */}
+      {total > 0 && (
+        <Card><CardContent className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Session progress</span>
+            <span className="text-sm font-medium">{completedCount}/{total} problems</span>
+          </div>
+          <Progress value={progress} className="h-2" />
+        </CardContent></Card>
+      )}
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search problems..." value={searchQuery}
+          onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      </div>
+
+      {/* Problems */}
+      {filtered.length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {filtered.map((p) => (
+            <PracticeProblemCard
+              key={p.id}
+              {...p}
+              isCompleted={completed.has(p.id) || p.isCompleted}
+              onStart={() => handleComplete(p.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <Card><CardContent className="p-8 text-center">
+          <p className="text-muted-foreground">
+            {problems.length === 0
+              ? "No practice problems yet. Generate a learning map first!"
+              : "No problems match your search."}
+          </p>
+          {problems.length === 0 && (
+            <Button className="mt-3" asChild>
+              <a href="/assessment">Go to Skill Assessment →</a>
+            </Button>
+          )}
+        </CardContent></Card>
+      )}
+    </div>
+  )
+}
+
+export default function PracticePage() {
+  return (
+    <AppShell>
+      <Suspense fallback={
+        <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" /><span>Loading...</span>
+        </div>
+      }>
+        <PracticeContent />
+      </Suspense>
     </AppShell>
   )
 }

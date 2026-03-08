@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 export type ConceptStatus = "completed" | "in-progress" | "weak" | "recommended" | "locked"
 
-export interface ConceptNodeData {
+export interface ConceptNodeData extends Record<string, unknown> {
   label: string
   status: ConceptStatus
   level: number

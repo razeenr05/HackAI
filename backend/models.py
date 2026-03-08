@@ -131,3 +131,24 @@ def get_all_prerequisites(db: Session, node_id: str) -> list:
     if not prereq_ids:
         return []
     return db.query(Node).filter(Node.id.in_(prereq_ids)).all()
+
+
+class UserGoal(Base):
+    """Stores the current learning goal string for each user."""
+    __tablename__ = "user_goals"
+
+    user_id = Column(String, primary_key=True, index=True)
+    goal    = Column(Text, nullable=False, default="")
+
+
+class UserActivity(Base):
+    """Tracks each day a user completed at least one node — used for streak calculation."""
+    __tablename__ = "user_activity"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(String, nullable=False, index=True)
+    activity_date = Column(String, nullable=False)   # stored as ISO date string "YYYY-MM-DD"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "activity_date", name="uq_user_activity_date"),
+    )

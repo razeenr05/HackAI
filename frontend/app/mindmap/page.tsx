@@ -1,29 +1,46 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { KnowledgeGraph } from "@/components/mindmap/knowledge-graph"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Sparkles } from "lucide-react"
+import { Settings2 } from "lucide-react"
 
 const legendItems = [
-  { status: "Completed",   color: "bg-success" },
-  { status: "In Progress", color: "bg-warning" },
+  { status: "Completed",   color: "bg-success"    },
+  { status: "In Progress", color: "bg-warning"     },
   { status: "Weak",        color: "bg-destructive" },
-  { status: "Recommended", color: "bg-primary" },
-  { status: "Locked",      color: "bg-muted" },
+  { status: "Recommended", color: "bg-primary"     },
+  { status: "Locked",      color: "bg-muted"       },
 ]
 
 export default function MindMapPage() {
   const router = useRouter()
   const [goal, setGoal] = useState("")
-
   useEffect(() => {
-    const stored = localStorage.getItem("hackai_goal")
-    if (stored) setGoal(stored)
+    const userId = localStorage.getItem("hackai_user_id") || "user-1"
+    // Always fetch goal from the backend (source of truth) to avoid stale localStorage
+    fetch(`http://localhost:8000/api/goal/${userId}`)
+      .then(r => r.json())
+      .then(d => {
+        const g = d.goal || localStorage.getItem("hackai_goal") || "your topic"
+        setGoal(g)
+        // Keep localStorage in sync
+        if (d.goal) localStorage.setItem("hackai_goal", d.goal)
+      })
+      .catch(() => setGoal(localStorage.getItem("hackai_goal") || "your topic"))
   }, [])
+
+  const handleNewTopic = async () => {
+    const userId = localStorage.getItem("hackai_user_id") || "user-1"
+    try {
+      await fetch(`http://localhost:8000/api/graph/${userId}`, { method: "DELETE" })
+    } catch { /* ignore */ }
+    localStorage.removeItem("hackai_goal")
+    router.push("/assessment")
+  }
 
   return (
     <AppShell>
@@ -31,15 +48,12 @@ export default function MindMapPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-foreground">
-              {goal ? `Learning: ${goal}` : "Learning Mind Map"}
+              Learning: <span className="text-primary">{goal}</span>
             </h1>
-            <p className="text-muted-foreground">
-              Explore your knowledge graph and discover learning paths
-            </p>
+            <p className="text-muted-foreground">Explore your knowledge graph and discover learning paths</p>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Legend */}
             <Card className="shrink-0">
               <CardContent className="p-3">
                 <div className="flex flex-wrap items-center gap-3">
@@ -52,14 +66,8 @@ export default function MindMapPage() {
                 </div>
               </CardContent>
             </Card>
-
-            {/* Change topic button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.push("/learn")}
-            >
-              <Sparkles className="mr-2 h-4 w-4" />
+            <Button variant="outline" onClick={handleNewTopic} className="shrink-0 gap-2">
+              <Settings2 className="h-4 w-4" />
               New Topic
             </Button>
           </div>
