@@ -1,29 +1,39 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from sqlalchemy.orm import Session
+import math
+
+from database import get_db, engine
+import models
+
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="HackAI API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js dev server
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic schemas — match the TypeScript interfaces in the frontend exactly
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
 
 class NodeData(BaseModel):
     label: str
-    status: str   # "completed" | "in-progress" | "weak" | "recommended" | "locked"
-    level: int    # 0–5, drives the skill dots in ConceptNode
+    status: str
+    level: int
     description: Optional[str] = None
 
 class FlowNode(BaseModel):
     id: str
-    position: dict # { x: float, y: float }
+    position: dict
     data: NodeData
     type: str = "concept"
 
@@ -66,127 +76,424 @@ class UnlockCheckResponse(BaseModel):
     is_unlocked: bool
     missing_prerequisites: List[str]
 
-# Stub data 
+class GenerateGraphRequest(BaseModel):
+    user_id: str
+    goal: str
 
-STUB_NODES = [
-    FlowNode(id="variables",    position={"x": 400, "y": 50},  data=NodeData(label="Variables",    status="completed",   level=4, description="Understanding data types and storage")),
-    FlowNode(id="loops",        position={"x": 200, "y": 150}, data=NodeData(label="Loops",        status="completed",   level=4, description="Iteration and repetition")),
-    FlowNode(id="functions",    position={"x": 600, "y": 150}, data=NodeData(label="Functions",    status="in-progress", level=3, description="Modular code blocks")),
-    FlowNode(id="arrays",       position={"x": 100, "y": 280}, data=NodeData(label="Arrays",       status="in-progress", level=3, description="Ordered data collections")),
-    FlowNode(id="recursion",    position={"x": 500, "y": 280}, data=NodeData(label="Recursion",    status="weak",        level=1, description="Self-referencing functions")),
-    FlowNode(id="linked-lists", position={"x": 300, "y": 380}, data=NodeData(label="Linked Lists", status="recommended", level=2, description="Dynamic linear structures")),
-    FlowNode(id="trees",        position={"x": 500, "y": 450}, data=NodeData(label="Trees",        status="locked",      level=1, description="Hierarchical structures")),
-    FlowNode(id="sorting",      position={"x": 100, "y": 420}, data=NodeData(label="Sorting",      status="weak",        level=2, description="Ordering algorithms")),
-]
+class Resource(BaseModel):
+    id: str
+    title: str
+    description: str
+    type: str
+    timestamp: Optional[str] = None
+    duration: Optional[str] = None
+    topic: str
+    difficulty: str
+    source: str
+    featured: bool = False
 
-STUB_EDGES = [
-    FlowEdge(id="e1", source="variables",    target="loops",        animated=False, style={"stroke": "hsl(var(--border))"}),
-    FlowEdge(id="e2", source="variables",    target="functions",    animated=False, style={"stroke": "hsl(var(--border))"}),
-    FlowEdge(id="e3", source="loops",        target="arrays",       animated=False, style={"stroke": "hsl(var(--border))"}),
-    FlowEdge(id="e4", source="functions",    target="recursion",    animated=True,  style={"stroke": "hsl(var(--destructive))"}),
-    FlowEdge(id="e5", source="arrays",       target="linked-lists", animated=True,  style={"stroke": "hsl(var(--primary))"}),
-    FlowEdge(id="e6", source="arrays",       target="sorting",      animated=False, style={"stroke": "hsl(var(--border))"}),
-    FlowEdge(id="e7", source="recursion",    target="trees",        animated=False, style={"stroke": "hsl(var(--border))", "opacity": 0.4}),
-    FlowEdge(id="e8", source="linked-lists", target="trees",        animated=False, style={"stroke": "hsl(var(--border))", "opacity": 0.4}),
-]
+class PracticeProblem(BaseModel):
+    id: str
+    title: str
+    description: str
+    difficulty: str
+    topic: str
+    hint: str
+    expectedOutput: str
+    isCompleted: bool = False
 
-STUB_DETAILS = {
-    "variables":    ConceptDetail(id="variables",    label="Variables",    status="completed",   level=4, description="Understanding data types and storage",  explanation="Variables are containers for storing data values. In programming, variables hold information that can change during execution. They have types like numbers, strings, and booleans.",                                                         practiceProblems=["Declare different variable types", "Variable scope challenge", "Type conversion exercise"], resources=[ResourceItem(title="Variables Deep Dive", type="Video"), ResourceItem(title="Interactive Tutorial", type="Tutorial")], relatedTopics=["Types", "Constants", "Scope"]),
-    "loops":        ConceptDetail(id="loops",        label="Loops",        status="completed",   level=4, description="Iteration and repetition",               explanation="Loops repeat a block of code multiple times. For loops run a known number of times, while loops run on a condition, and do-while loops run at least once.",                                                                           practiceProblems=["Sum of array elements", "Pattern printing", "Nested loop challenge"],            resources=[ResourceItem(title="Loop Mastery Course", type="Course"), ResourceItem(title="Common Loop Patterns", type="Article")],      relatedTopics=["Arrays", "Control Flow", "Iteration"]),
-    "functions":    ConceptDetail(id="functions",    label="Functions",    status="in-progress", level=3, description="Modular code blocks",                    explanation="Functions are reusable blocks of code that perform specific tasks. They accept parameters, process data, and return results — reducing repetition and improving maintainability.",                                                   practiceProblems=["Create utility functions", "Higher-order functions", "Callback patterns"],        resources=[ResourceItem(title="Functions Fundamentals", type="Video"), ResourceItem(title="Clean Function Design", type="Article")],  relatedTopics=["Parameters", "Return Values", "Closures"]),
-    "arrays":       ConceptDetail(id="arrays",       label="Arrays",       status="in-progress", level=3, description="Ordered data collections",               explanation="Arrays are ordered collections accessible by index. They are fundamental data structures used to store multiple values of the same type in a single variable.",                                                                       practiceProblems=["Array manipulation", "Two pointer technique", "Sliding window"],                 resources=[ResourceItem(title="Array Methods Guide", type="Tutorial"), ResourceItem(title="Array Algorithms", type="Course")],        relatedTopics=["Loops", "Indexing", "Sorting"]),
-    "recursion":    ConceptDetail(id="recursion",    label="Recursion",    status="weak",        level=1, description="Self-referencing functions",              explanation="Recursion is a technique where a function calls itself to solve smaller instances of the same problem. It needs a base case to stop and a recursive case that moves toward it.",                                                   practiceProblems=["Factorial calculation", "Fibonacci sequence", "Tree traversal"],                 resources=[ResourceItem(title="Recursion Explained", type="Video"), ResourceItem(title="Visualizing Recursion", type="Interactive")], relatedTopics=["Functions", "Call Stack", "Base Case"]),
-    "linked-lists": ConceptDetail(id="linked-lists", label="Linked Lists", status="recommended", level=2, description="Dynamic linear structures",              explanation="Linked lists store elements in nodes where each node points to the next. Unlike arrays, they allow efficient insertion and deletion without reorganizing the entire structure.",                                                 practiceProblems=["Reverse linked list", "Detect cycle", "Merge sorted lists"],                     resources=[ResourceItem(title="Linked List Basics", type="Video"), ResourceItem(title="Implementation Guide", type="Tutorial")],    relatedTopics=["Pointers", "Memory", "Nodes"]),
-    "trees":        ConceptDetail(id="trees",        label="Trees",        status="locked",      level=1, description="Hierarchical structures",                 explanation="Trees are hierarchical structures with a root and child nodes. Binary trees, BSTs, and balanced trees are common variants used for efficient searching, sorting, and organizing hierarchical data.",                            practiceProblems=["Tree traversal", "BST operations", "Tree height"],                               resources=[ResourceItem(title="Tree Data Structures", type="Course"), ResourceItem(title="Binary Trees Explained", type="Video")],   relatedTopics=["Recursion", "Graphs", "Traversal"]),
-    "sorting":      ConceptDetail(id="sorting",      label="Sorting",      status="weak",        level=2, description="Ordering algorithms",                    explanation="Sorting algorithms arrange elements in order. Bubble, merge, quick, and heap sort are common. Understanding time and space complexity helps choose the right algorithm for each situation.",                                        practiceProblems=["Implement merge sort", "Quick sort variations", "Sort analysis"],                resources=[ResourceItem(title="Sorting Visualized", type="Interactive"), ResourceItem(title="Algorithm Analysis", type="Article")],  relatedTopics=["Arrays", "Complexity", "Comparison"]),
-}
 
+# ---------------------------------------------------------------------------
+# Helper: auto-layout nodes in a layered tree so they don't overlap
+# ---------------------------------------------------------------------------
+
+def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
+    """
+    Returns a dict of node_id -> (x, y) positions.
+    Groups nodes into layers based on their depth in the prerequisite graph.
+    """
+    # Build adjacency: target -> list of sources (prerequisites)
+    prereq_map: dict[str, list[str]] = {}
+    all_ids = {n["id"] for n in raw_nodes}
+    for e in raw_edges:
+        prereq_map.setdefault(e["target"], []).append(e["source"])
+
+    # BFS to assign depth layers
+    depth: dict[str, int] = {}
+    roots = [n["id"] for n in raw_nodes if n["id"] not in prereq_map or not prereq_map[n["id"]]]
+    queue = [(r, 0) for r in roots]
+    while queue:
+        node_id, d = queue.pop(0)
+        if node_id in depth:
+            continue
+        depth[node_id] = d
+        for e in raw_edges:
+            if e["source"] == node_id:
+                queue.append((e["target"], d + 1))
+
+    # Any node not reached gets depth = max + 1
+    max_depth = max(depth.values()) if depth else 0
+    for n in raw_nodes:
+        if n["id"] not in depth:
+            depth[n["id"]] = max_depth + 1
+
+    # Group by layer
+    layers: dict[int, list[str]] = {}
+    for node_id, d in depth.items():
+        layers.setdefault(d, []).append(node_id)
+
+    # Assign (x, y) — spread each layer horizontally
+    positions: dict[str, tuple[float, float]] = {}
+    x_gap = 220
+    y_gap = 160
+    for layer_idx, node_ids in sorted(layers.items()):
+        count = len(node_ids)
+        total_width = (count - 1) * x_gap
+        for i, node_id in enumerate(node_ids):
+            x = i * x_gap - total_width / 2 + 400
+            y = layer_idx * y_gap + 50
+            positions[node_id] = (x, y)
+
+    return positions
+
+
+# ---------------------------------------------------------------------------
 # Routes
+# ---------------------------------------------------------------------------
 
 @app.get("/", tags=["health"])
 def health_check():
     return {"status": "ok", "message": "HackAI API is running"}
 
 
-# Mind map
+# ── Generate graph (the new core endpoint) ───────────────────────────────────
+
+@app.post("/api/generate-graph", tags=["mindmap"])
+def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db)):
+    """
+    Takes a user's learning goal, calls the AI to generate a knowledge graph,
+    saves it to the DB, and returns it ready for React Flow.
+    Works for ANY topic: basketball, cooking, ML, music theory — anything.
+    """
+    from services.ai_service import generate_knowledge_graph
+
+    # If user already has a graph, skip the API call entirely
+    existing = db.query(models.Node).filter(
+        models.Node.user_id == payload.user_id
+    ).first()
+    if existing:
+        return {"status": "ok", "goal": payload.goal, "cached": True, "node_count": 0}
+
+    # Ask AI to generate the graph (only called once per user)
+    graph = generate_knowledge_graph(payload.goal)
+
+    # Calculate positions using the graph's edge structure
+    positions = _layout_nodes(graph["nodes"], graph["edges"])
+
+    # Write nodes to DB
+    node_id_map = {}  # original AI id -> namespaced DB id
+    for n in graph["nodes"]:
+        db_id = f"{payload.user_id}-{n['id']}"
+        node_id_map[n["id"]] = db_id
+
+        node = models.Node(
+            id=db_id,
+            user_id=payload.user_id,
+            label=n["label"],
+            description=n.get("description", ""),
+            explanation=n.get("explanation", ""),
+            status=n.get("status", "locked"),
+            level=n.get("level", 0),
+            position_x=positions.get(n["id"], (400, 50))[0],
+            position_y=positions.get(n["id"], (400, 50))[1],
+        )
+        node.practice_problems = n.get("practice_problems", [])
+        node.related_topics = n.get("related_topics", [])
+        db.add(node)
+
+        for r in n.get("resources", []):
+            db.add(models.NodeResource(node_id=db_id, title=r["title"], type=r["type"]))
+
+    db.flush()  # get IDs before writing edges
+
+    # Write edges to DB
+    for e in graph["edges"]:
+        src = node_id_map.get(e["source"])
+        tgt = node_id_map.get(e["target"])
+        if src and tgt:
+            db.add(models.Edge(source_id=src, target_id=tgt))
+
+    db.commit()
+
+    return {
+        "status": "ok",
+        "goal": payload.goal,
+        "node_count": len(graph["nodes"]),
+        "edge_count": len(graph["edges"]),
+    }
+
+
+# ── Mind map ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/mindmap/{user_id}", response_model=MindMapResponse, tags=["mindmap"])
-def get_mindmap(user_id: str):
-    """
-    Returns all React Flow nodes + edges for the canvas.
-    Node status drives colour in ConceptNode; edge animated/style drives arrows.
-    TODO: replace stub data with DB query.
-    TODO: apply user progress so completed nodes show correctly.
-    """
-    return MindMapResponse(nodes=STUB_NODES, edges=STUB_EDGES)
+def get_mindmap(user_id: str, db: Session = Depends(get_db)):
+    completed_ids = {
+        row.node_id
+        for row in db.query(models.UserProgress).filter(
+            models.UserProgress.user_id == user_id
+        ).all()
+    }
+
+    db_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+    db_edges = db.query(models.Edge).all()
+
+    # Only keep edges between this user's nodes
+    user_node_ids = {n.id for n in db_nodes}
+    db_edges = [e for e in db_edges if e.source_id in user_node_ids and e.target_id in user_node_ids]
+
+    prereq_map: dict[str, list[str]] = {}
+    for edge in db_edges:
+        prereq_map.setdefault(edge.target_id, []).append(edge.source_id)
+
+    flow_nodes = []
+    for node in db_nodes:
+        prereqs = prereq_map.get(node.id, [])
+        if node.id in completed_ids:
+            status = "completed"
+        elif prereqs and not all(p in completed_ids for p in prereqs):
+            status = "locked"
+        else:
+            status = node.status
+
+        flow_nodes.append(FlowNode(
+            id=node.id,
+            position={"x": node.position_x, "y": node.position_y},
+            type="concept",
+            data=NodeData(
+                label=node.label,
+                status=status,
+                level=node.level,
+                description=node.description,
+            ),
+        ))
+
+    flow_edges = []
+    for edge in db_edges:
+        is_animated = edge.source_id in completed_ids
+        flow_edges.append(FlowEdge(
+            id=f"e{edge.id}",
+            source=edge.source_id,
+            target=edge.target_id,
+            animated=is_animated,
+            style={"stroke": "hsl(var(--primary))" if is_animated else "hsl(var(--border))"},
+        ))
+
+    return MindMapResponse(nodes=flow_nodes, edges=flow_edges)
 
 
-# Concept detail
+# ── Concept detail ────────────────────────────────────────────────────────────
 
 @app.get("/api/nodes/{node_id}", response_model=ConceptDetail, tags=["nodes"])
-def get_concept_detail(node_id: str):
-    """
-    Returns the full detail object for the ConceptPanel side drawer.
-    Matches the ConceptDetails interface in knowledge-graph.tsx exactly.
-    TODO: replace with DB query.
-    """
-    detail = STUB_DETAILS.get(node_id)
-    if not detail:
+def get_concept_detail(node_id: str, db: Session = Depends(get_db)):
+    node = db.query(models.Node).filter(models.Node.id == node_id).first()
+    if not node:
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
-    return detail
-
-
-# User progress 
-
-@app.get("/api/progress/{user_id}", response_model=ProgressResponse, tags=["progress"])
-def get_progress(user_id: str):
-    """
-    Returns a user's completed node IDs.
-    TODO (Member 4): query the UserProgress table.
-    """
-    return ProgressResponse(user_id=user_id, completed_node_ids=[])
-
-
-@app.post("/api/progress/complete", response_model=ProgressResponse, tags=["progress"])
-def complete_node(payload: ProgressUpdate):
-    """
-    Marks a node as completed for a user.
-    TODO (Member 4): insert/update UserProgress row and return updated list.
-    """
-    return ProgressResponse(user_id=payload.user_id, completed_node_ids=[payload.node_id])
-
-
-@app.get("/api/progress/{user_id}/unlock/{node_id}", response_model=UnlockCheckResponse, tags=["progress"])
-def check_unlock(user_id: str, node_id: str):
-    """
-    Called when a user clicks a LOCKED node.
-    TODO (Member 4): check the user's history against prerequisite nodes.
-    """
-    locked_prereqs = {"trees": ["recursion", "linked-lists"]}
-    prereqs = locked_prereqs.get(node_id, [])
-    return UnlockCheckResponse(
-        node_id=node_id,
-        is_unlocked=len(prereqs) == 0,
-        missing_prerequisites=prereqs,
+    return ConceptDetail(
+        id=node.id,
+        label=node.label,
+        status=node.status,
+        level=node.level,
+        description=node.description or "",
+        explanation=node.explanation or "",
+        practiceProblems=node.practice_problems,
+        resources=[ResourceItem(title=r.title, type=r.type) for r in node.resources],
+        relatedTopics=node.related_topics,
     )
 
 
-# -- YouTube snippet (Member 3 will implement the service layer) -------------
+# ── Progress ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/progress/{user_id}", response_model=ProgressResponse, tags=["progress"])
+def get_progress(user_id: str, db: Session = Depends(get_db)):
+    completed = db.query(models.UserProgress).filter(
+        models.UserProgress.user_id == user_id
+    ).all()
+    return ProgressResponse(
+        user_id=user_id,
+        completed_node_ids=[r.node_id for r in completed],
+    )
+
+
+@app.post("/api/progress/complete", response_model=ProgressResponse, tags=["progress"])
+def complete_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
+    exists = db.query(models.UserProgress).filter(
+        models.UserProgress.user_id == payload.user_id,
+        models.UserProgress.node_id == payload.node_id,
+    ).first()
+    if not exists:
+        db.add(models.UserProgress(user_id=payload.user_id, node_id=payload.node_id))
+        db.commit()
+
+    completed = db.query(models.UserProgress).filter(
+        models.UserProgress.user_id == payload.user_id
+    ).all()
+    return ProgressResponse(
+        user_id=payload.user_id,
+        completed_node_ids=[r.node_id for r in completed],
+    )
+
+
+@app.get("/api/progress/{user_id}/unlock/{node_id}", response_model=UnlockCheckResponse, tags=["progress"])
+def check_unlock(user_id: str, node_id: str, db: Session = Depends(get_db)):
+    completed_ids = {
+        r.node_id for r in db.query(models.UserProgress).filter(
+            models.UserProgress.user_id == user_id
+        ).all()
+    }
+    prereqs = models.get_all_prerequisites(db, node_id)
+    missing = [p.label for p in prereqs if p.id not in completed_ids]
+    return UnlockCheckResponse(
+        node_id=node_id,
+        is_unlocked=len(missing) == 0,
+        missing_prerequisites=missing,
+    )
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/dashboard/{user_id}", tags=["dashboard"])
+def get_dashboard(user_id: str, db: Session = Depends(get_db)):
+    all_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+    completed_ids = {
+        r.node_id for r in db.query(models.UserProgress).filter(
+            models.UserProgress.user_id == user_id
+        ).all()
+    }
+
+    total = len(all_nodes)
+    completed = len(completed_ids)
+    overall_progress = round((completed / total) * 100) if total > 0 else 0
+
+    avg_level = round(sum(n.level for n in all_nodes) / total, 1) if total > 0 else 0.0
+
+    weak_nodes = [n for n in all_nodes if n.status == "weak" and n.id not in completed_ids]
+    knowledge_gaps = [
+        {"name": n.label, "level": n.level, "status": "weak"}
+        for n in weak_nodes[:3]
+    ]
+
+    recommended_nodes = [n for n in all_nodes if n.status == "recommended" and n.id not in completed_ids]
+    recommended_topics = [
+        {
+            "title": n.label,
+            "description": n.description or "",
+            "reason": "Next on your learning path",
+            "improvement": "Unlock the next topics",
+            "difficulty": "Beginner" if n.level <= 1 else "Intermediate" if n.level <= 3 else "Advanced",
+            "href": f"/practice?topic={n.label}",
+        }
+        for n in recommended_nodes[:2]
+    ]
+
+    skill_data = [
+        {"subject": n.label, "value": n.level, "fullMark": 5}
+        for n in all_nodes[:6]
+    ]
+
+    return {
+        "conceptsLearned": completed,
+        "conceptsThisWeek": min(completed, 3),
+        "averageSkillLevel": f"{avg_level}/5",
+        "learningStreak": 0,
+        "timeSpentHours": 0,
+        "overallProgress": overall_progress,
+        "skillData": skill_data,
+        "progressData": [{"date": "Week 1", "progress": overall_progress}],
+        "knowledgeGaps": knowledge_gaps,
+        "recommendedTopics": recommended_topics,
+    }
+
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/resources", response_model=List[Resource], tags=["resources"])
+def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """
+    Builds resources from NodeResource rows in the DB.
+    Topic filter is based on the node labels.
+    TODO (Member 3): enrich with real YouTube snippets.
+    """
+    query = db.query(models.NodeResource).join(models.Node)
+    if topic:
+        query = query.filter(models.Node.label.ilike(f"%{topic}%"))
+
+    rows = query.all()
+    resources = []
+    for i, r in enumerate(rows):
+        resources.append(Resource(
+            id=str(r.id),
+            title=r.title,
+            description=r.node.description or f"Learn about {r.node.label}",
+            type=r.type.lower(),
+            topic=r.node.label,
+            difficulty="Beginner" if r.node.level <= 1 else "Intermediate" if r.node.level <= 3 else "Advanced",
+            source="YouTube" if r.type == "Video" else "Web",
+            featured=i < 3,
+        ))
+    return resources
+
+
+# ── Practice problems ─────────────────────────────────────────────────────────
+
+@app.get("/api/practice", response_model=List[PracticeProblem], tags=["practice"])
+def get_practice(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """
+    Builds practice problems from the practice_problems field on each Node.
+    Topic filter is based on node labels.
+    TODO (Member 3): enrich with AI-generated problems.
+    """
+    query = db.query(models.Node)
+    if topic:
+        query = query.filter(models.Node.label.ilike(f"%{topic}%"))
+
+    nodes = query.all()
+    problems = []
+    problem_id = 1
+    for node in nodes:
+        for i, problem_text in enumerate(node.practice_problems):
+            difficulty = "Easy" if i == 0 else "Medium" if i == 1 else "Hard"
+            problems.append(PracticeProblem(
+                id=str(problem_id),
+                title=problem_text,
+                description=f"Practice exercise for {node.label}: {problem_text}",
+                difficulty=difficulty,
+                topic=node.label,
+                hint=f"Think about the fundamentals of {node.label}.",
+                expectedOutput="Complete the exercise as described.",
+                isCompleted=False,
+            ))
+            problem_id += 1
+    return problems
+
+
+# ── YouTube snippet ───────────────────────────────────────────────────────────
 
 @app.get("/api/snippet/{node_id}", tags=["snippets"])
-def get_snippet(node_id: str):
-    """
-    Returns a timestamped YouTube snippet for a topic node.
-    TODO (Member 3): call youtube_service.get_video_snippet(topic).
-    """
-    detail = STUB_DETAILS.get(node_id)
-    topic = detail.label if detail else node_id.replace("-", " ").title()
-    return {
-        "node_id": node_id,
-        "topic": topic,
-        "video_id": "placeholder",
-        "video_title": f"Learn {topic}",
-        "start_seconds": 0,
-        "end_seconds": 0,
-        "thumbnail_url": "",
-    }
+def get_snippet(node_id: str, db: Session = Depends(get_db)):
+    node = db.query(models.Node).filter(models.Node.id == node_id).first()
+    topic = node.label if node else node_id.replace("-", " ").title()
+
+    try:
+        from services.youtube_service import get_video_snippet
+        result = get_video_snippet(topic)
+        return {"node_id": node_id, **result}
+    except (ImportError, NotImplementedError):
+        return {
+            "node_id": node_id,
+            "topic": topic,
+            "video_id": "placeholder",
+            "video_title": f"Learn {topic}",
+            "start_seconds": 0,
+            "end_seconds": 0,
+            "thumbnail_url": "",
+        }
