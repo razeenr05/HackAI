@@ -137,6 +137,24 @@ export function KnowledgeGraph() {
     } catch { /* ignore */ }
   }, [userId, loadGraph])
 
+  const handleMarkWeak = useCallback(async (nodeId: string) => {
+    try {
+      await fetch("http://localhost:8000/api/progress/weak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, node_id: nodeId }),
+      })
+      await loadGraph()
+      const res = await fetch(`http://localhost:8000/api/nodes/${nodeId}`)
+      if (res.ok) {
+        const updated = await res.json()
+        setSelectedConcept({ ...updated, status: "weak" })
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [userId, loadGraph])
+
   const handleMarkUncomplete = useCallback(async (nodeId: string) => {
     try {
       await fetch("http://localhost:8000/api/progress/uncomplete", {
@@ -221,6 +239,7 @@ export function KnowledgeGraph() {
         onClose={handleClosePanel}
         onMarkStart={handleMarkStart}
         onMarkComplete={handleMarkComplete}
+        onMarkWeak={handleMarkWeak}
         onMarkUncomplete={handleMarkUncomplete}
       />
     </div>

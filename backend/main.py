@@ -7,11 +7,12 @@ import math
 import os
 import json
 
-from database import get_db, engine
+from database import get_db, engine, run_migrations
 import models
 import auth as auth_module
 
 models.Base.metadata.create_all(bind=engine)
+run_migrations()
 
 app = FastAPI(title="HackAI API", version="1.0.0")
 
@@ -124,6 +125,14 @@ class PracticeProblem(BaseModel):
     hint: str
     expectedOutput: str
     isCompleted: bool = False
+    node_id: Optional[str] = None
+    problem_index: Optional[int] = None
+
+
+class PracticeCompleteRequest(BaseModel):
+    user_id: str
+    node_id: str
+    problem_index: int
 
 
 def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
@@ -172,15 +181,19 @@ def _layout_nodes(raw_nodes: list, raw_edges: list) -> dict:
     return positions
 
 
-def _wipe_user_graph(user_id: str, db: Session):
-    nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+def _wipe_user_graph(user_id: str, db: Session, goal_id: Optional[int] = None):
+    """Wipe nodes (and related data) for a user. If goal_id is set, only wipe that goal's nodes."""
+    if goal_id is not None:
+        nodes = db.query(models.Node).filter(models.Node.user_id == user_id, models.Node.goal_id == goal_id).all()
+    else:
+        nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
     node_ids = [n.id for n in nodes]
     if node_ids:
-        db.query(models.UserProgress).filter(models.UserProgress.user_id == user_id).delete(synchronize_session=False)
+        db.query(models.UserProgress).filter(models.UserProgress.node_id.in_(node_ids)).delete(synchronize_session=False)
         db.query(models.Edge).filter(models.Edge.source_id.in_(node_ids)).delete(synchronize_session=False)
         db.query(models.Edge).filter(models.Edge.target_id.in_(node_ids)).delete(synchronize_session=False)
         db.query(models.NodeResource).filter(models.NodeResource.node_id.in_(node_ids)).delete(synchronize_session=False)
-        db.query(models.Node).filter(models.Node.user_id == user_id).delete(synchronize_session=False)
+        db.query(models.Node).filter(models.Node.id.in_(node_ids)).delete(synchronize_session=False)
     db.commit()
 
 
@@ -191,11 +204,17 @@ def health_check():
 
 @app.post("/api/goal", tags=["goal"])
 def save_goal(payload: SaveGoalRequest, db: Session = Depends(get_db)):
+    lg = db.query(models.LearningGoal).filter(
+        models.LearningGoal.user_id == payload.user_id,
+        models.LearningGoal.goal == payload.goal.strip(),
+    ).first()
+    goal_id = lg.id if lg else None
     existing = db.query(models.UserGoal).filter(models.UserGoal.user_id == payload.user_id).first()
     if existing:
-        existing.goal = payload.goal
+        existing.goal = payload.goal.strip()
+        existing.goal_id = goal_id
     else:
-        db.add(models.UserGoal(user_id=payload.user_id, goal=payload.goal))
+        db.add(models.UserGoal(user_id=payload.user_id, goal=payload.goal.strip(), goal_id=goal_id))
     db.commit()
     return {"status": "ok", "goal": payload.goal}
 
@@ -203,31 +222,99 @@ def save_goal(payload: SaveGoalRequest, db: Session = Depends(get_db)):
 @app.get("/api/goal/{user_id}", tags=["goal"])
 def get_goal(user_id: str, db: Session = Depends(get_db)):
     row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
-    return {"goal": row.goal if row else ""}
+    return {"goal": row.goal if row else "", "goal_id": row.goal_id if row and row.goal_id is not None else None}
+
+
+@app.get("/api/learning-goals/{user_id}", tags=["goal"])
+def list_learning_goals(user_id: str, db: Session = Depends(get_db)):
+    """List all learning goals (past topics) for the user, most recent first."""
+    rows = db.query(models.LearningGoal).filter(
+        models.LearningGoal.user_id == user_id
+    ).order_by(models.LearningGoal.created_at.desc()).all()
+    return [{"id": r.id, "goal": r.goal, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+
+class SetCurrentGoalRequest(BaseModel):
+    user_id: str
+    goal_id: int
+
+
+@app.post("/api/current-goal", tags=["goal"])
+def set_current_goal(payload: SetCurrentGoalRequest, db: Session = Depends(get_db)):
+    """Set the user's current learning goal (e.g. when resuming a past topic)."""
+    lg = db.query(models.LearningGoal).filter(
+        models.LearningGoal.id == payload.goal_id,
+        models.LearningGoal.user_id == payload.user_id,
+    ).first()
+    if not lg:
+        raise HTTPException(status_code=404, detail="Learning goal not found")
+    _set_current_goal(db, payload.user_id, lg.goal, payload.goal_id)
+    db.commit()
+    return {"goal": lg.goal, "goal_id": payload.goal_id}
+
+
+@app.delete("/api/learning-goals/{user_id}/{goal_id}", tags=["goal"])
+def delete_learning_goal(user_id: str, goal_id: int, db: Session = Depends(get_db)):
+    """Delete a single learning goal and all its data (mind map, progress, practice completion)."""
+    lg = db.query(models.LearningGoal).filter(
+        models.LearningGoal.id == goal_id,
+        models.LearningGoal.user_id == user_id,
+    ).first()
+    if not lg:
+        raise HTTPException(status_code=404, detail="Learning goal not found")
+    node_ids = [n.id for n in db.query(models.Node).filter(
+        models.Node.user_id == user_id, models.Node.goal_id == goal_id
+    ).all()]
+    if node_ids:
+        db.query(models.UserPracticeCompletion).filter(
+            models.UserPracticeCompletion.node_id.in_(node_ids)
+        ).delete(synchronize_session=False)
+    _wipe_user_graph(user_id, db, goal_id=goal_id)
+    db.query(models.LearningGoal).filter(
+        models.LearningGoal.id == goal_id, models.LearningGoal.user_id == user_id
+    ).delete(synchronize_session=False)
+    row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+    if row and row.goal_id == goal_id:
+        row.goal_id = None
+        row.goal = ""
+    db.commit()
+    return {"status": "ok", "message": "Learning goal deleted"}
 
 
 @app.post("/api/generate-graph", tags=["mindmap"])
 def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db)):
     from services.ai_service import generate_knowledge_graph
-    if payload.force:
-        _wipe_user_graph(payload.user_id, db)
-    existing_goal = db.query(models.UserGoal).filter(models.UserGoal.user_id == payload.user_id).first()
-    if existing_goal:
-        existing_goal.goal = payload.goal
+    goal_text = payload.goal.strip()
+    existing_goal_row = db.query(models.LearningGoal).filter(
+        models.LearningGoal.user_id == payload.user_id,
+        models.LearningGoal.goal == goal_text,
+    ).first()
+    if existing_goal_row:
+        goal_id = existing_goal_row.id
+        if payload.force:
+            _wipe_user_graph(payload.user_id, db, goal_id=goal_id)
+        else:
+            existing = db.query(models.Node).filter(
+                models.Node.user_id == payload.user_id, models.Node.goal_id == goal_id
+            ).first()
+            if existing:
+                _set_current_goal(db, payload.user_id, goal_text, goal_id)
+                db.commit()
+                return {"status": "ok", "goal": payload.goal, "cached": True, "node_count": 0, "goal_id": goal_id}
     else:
-        db.add(models.UserGoal(user_id=payload.user_id, goal=payload.goal))
-    db.commit()
-    existing = db.query(models.Node).filter(models.Node.user_id == payload.user_id).first()
-    if existing:
-        return {"status": "ok", "goal": payload.goal, "cached": True, "node_count": 0}
+        existing_goal_row = models.LearningGoal(user_id=payload.user_id, goal=goal_text)
+        db.add(existing_goal_row)
+        db.flush()
+        goal_id = existing_goal_row.id
+
     graph = generate_knowledge_graph(payload.goal)
     positions = _layout_nodes(graph["nodes"], graph["edges"])
     node_id_map = {}
     for n in graph["nodes"]:
-        db_id = f"{payload.user_id}-{n['id']}"
+        db_id = f"{payload.user_id}-{goal_id}-{n['id']}"
         node_id_map[n["id"]] = db_id
         node = models.Node(
-            id=db_id, user_id=payload.user_id, label=n["label"],
+            id=db_id, user_id=payload.user_id, goal_id=goal_id, label=n["label"],
             description=n.get("description", ""), explanation=n.get("explanation", ""),
             status=n.get("status", "locked"), level=n.get("level", 0),
             position_x=positions.get(n["id"], (400, 50))[0],
@@ -244,24 +331,54 @@ def generate_graph(payload: GenerateGraphRequest, db: Session = Depends(get_db))
         tgt = node_id_map.get(e["target"])
         if src and tgt:
             db.add(models.Edge(source_id=src, target_id=tgt))
+    _set_current_goal(db, payload.user_id, goal_text, goal_id)
     db.commit()
-    return {"status": "ok", "goal": payload.goal, "node_count": len(graph["nodes"]), "edge_count": len(graph["edges"])}
+    return {"status": "ok", "goal": payload.goal, "node_count": len(graph["nodes"]), "edge_count": len(graph["edges"]), "goal_id": goal_id}
+
+
+def _set_current_goal(db: Session, user_id: str, goal: str, goal_id: Optional[int]):
+    row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+    if row:
+        row.goal = goal
+        row.goal_id = goal_id
+    else:
+        db.add(models.UserGoal(user_id=user_id, goal=goal, goal_id=goal_id))
 
 
 @app.delete("/api/graph/{user_id}", tags=["mindmap"])
 def delete_graph(user_id: str, db: Session = Depends(get_db)):
-    _wipe_user_graph(user_id, db)
-    db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).delete()
+    _wipe_user_graph(user_id, db, goal_id=None)
+    db.query(models.LearningGoal).filter(models.LearningGoal.user_id == user_id).delete(synchronize_session=False)
+    db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).delete(synchronize_session=False)
     db.commit()
     return {"status": "ok", "message": f"Graph deleted for {user_id}"}
 
 
 @app.get("/api/mindmap/{user_id}", response_model=MindMapResponse, tags=["mindmap"])
-def get_mindmap(user_id: str, db: Session = Depends(get_db)):
-    completed_ids = {row.node_id for row in db.query(models.UserProgress).filter(models.UserProgress.user_id == user_id).all()}
-    db_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+def get_mindmap(
+    user_id: str,
+    goal_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Get mind map for user. Uses goal_id query param if provided, else current goal from user_goals."""
+    if goal_id is None:
+        row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+        goal_id = row.goal_id if row else None
+    if goal_id is not None:
+        db_nodes = db.query(models.Node).filter(
+            models.Node.user_id == user_id, models.Node.goal_id == goal_id
+        ).all()
+    else:
+        db_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
     user_node_ids = {n.id for n in db_nodes}
-    db_edges = db.query(models.Edge).filter(models.Edge.source_id.in_(user_node_ids), models.Edge.target_id.in_(user_node_ids)).all()
+    db_edges = db.query(models.Edge).filter(
+        models.Edge.source_id.in_(user_node_ids), models.Edge.target_id.in_(user_node_ids)
+    ).all()
+    completed_ids = {
+        r.node_id for r in db.query(models.UserProgress).filter(
+            models.UserProgress.user_id == user_id, models.UserProgress.node_id.in_(user_node_ids)
+        ).all()
+    }
     prereq_map: dict[str, list[str]] = {}
     for edge in db_edges:
         prereq_map.setdefault(edge.target_id, []).append(edge.source_id)
@@ -280,7 +397,7 @@ def get_mindmap(user_id: str, db: Session = Depends(get_db)):
     for edge in db_edges:
         is_animated = edge.source_id in completed_ids
         flow_edges.append(FlowEdge(id=f"e{edge.id}", source=edge.source_id, target=edge.target_id, animated=is_animated,
-            style={"stroke": "hsl(var(--primary))" if is_animated else "hsl(var(--border))"}))
+            style={"stroke": "var(--primary)" if is_animated else "var(--border)"}))
     return MindMapResponse(nodes=flow_nodes, edges=flow_edges)
 
 
@@ -347,6 +464,17 @@ def uncomplete_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
     return ProgressResponse(user_id=payload.user_id, completed_node_ids=[r.node_id for r in completed])
 
 
+@app.post("/api/progress/weak", response_model=ProgressResponse, tags=["progress"])
+def mark_weak_node(payload: ProgressUpdate, db: Session = Depends(get_db)):
+    """Mark a node as 'weak' (needs work) without changing completion records."""
+    node = db.query(models.Node).filter(models.Node.id == payload.node_id).first()
+    if node:
+        node.status = "weak"
+        db.commit()
+    completed = db.query(models.UserProgress).filter(models.UserProgress.user_id == payload.user_id).all()
+    return ProgressResponse(user_id=payload.user_id, completed_node_ids=[r.node_id for r in completed])
+
+
 @app.get("/api/progress/{user_id}/unlock/{node_id}", response_model=UnlockCheckResponse, tags=["progress"])
 def check_unlock(user_id: str, node_id: str, db: Session = Depends(get_db)):
     completed_ids = {r.node_id for r in db.query(models.UserProgress).filter(models.UserProgress.user_id == user_id).all()}
@@ -381,7 +509,7 @@ Reply ONLY with valid JSON, no markdown:
         "generationConfig": {"temperature": 0.4}
     }).encode("utf-8")
 
-    models_list = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    models_list = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
     for model in models_list:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         req = urllib.request.Request(url, data=body,
@@ -400,11 +528,10 @@ Reply ONLY with valid JSON, no markdown:
                 "correct_index": int(parsed["correct_index"]),
                 "explanation": parsed.get("explanation", "")
             }
-        except urllib.error.HTTPError as e:
+        except urllib.error.HTTPError:
             continue
         except Exception:
             continue
-    # Fallback
     return {
         "choices": ["Option A", "Option B", "Option C", "Option D"],
         "correct_index": 0,
@@ -437,7 +564,7 @@ Be fair but accurate. Score above 70 means the student demonstrated understandin
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3}
     }).encode("utf-8")
-    models_list = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    models_list = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
     last_err = ""
     for model in models_list:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -464,8 +591,16 @@ Be fair but accurate. Score above 70 means the student demonstrated understandin
 @app.get("/api/dashboard/{user_id}", tags=["dashboard"])
 def get_dashboard(user_id: str, db: Session = Depends(get_db)):
     from datetime import date, timedelta
-    all_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+    row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+    goal_id = row.goal_id if row else None
+    if goal_id is not None:
+        all_nodes = db.query(models.Node).filter(
+            models.Node.user_id == user_id, models.Node.goal_id == goal_id
+        ).all()
+    else:
+        all_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
     completed_ids = {r.node_id for r in db.query(models.UserProgress).filter(models.UserProgress.user_id == user_id).all()}
+    completed_ids = completed_ids & {n.id for n in all_nodes}
     total = len(all_nodes)
     completed = len(completed_ids)
     overall_progress = round((completed / total) * 100) if total > 0 else 0
@@ -497,7 +632,14 @@ def get_dashboard(user_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/recommendations/{user_id}", tags=["recommendations"])
 def get_recommendations(user_id: str, db: Session = Depends(get_db)):
-    all_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
+    row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+    goal_id = row.goal_id if row else None
+    if goal_id is not None:
+        all_nodes = db.query(models.Node).filter(
+            models.Node.user_id == user_id, models.Node.goal_id == goal_id
+        ).all()
+    else:
+        all_nodes = db.query(models.Node).filter(models.Node.user_id == user_id).all()
     completed_ids = {r.node_id for r in db.query(models.UserProgress).filter(models.UserProgress.user_id == user_id).all()}
     user_node_ids = {n.id for n in all_nodes}
     db_edges = db.query(models.Edge).filter(models.Edge.source_id.in_(user_node_ids)).all()
@@ -541,8 +683,20 @@ def get_recommendations(user_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/resources", response_model=List[Resource], tags=["resources"])
-def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
+def get_resources(
+    topic: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """List resources. If user_id is provided, scope to that user's current learning goal."""
     query = db.query(models.NodeResource).join(models.Node)
+    if user_id:
+        row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+        goal_id = row.goal_id if row else None
+        if goal_id is not None:
+            query = query.filter(models.Node.user_id == user_id, models.Node.goal_id == goal_id)
+        else:
+            query = query.filter(models.Node.user_id == user_id)
     if topic:
         query = query.filter(models.Node.label.ilike(f"%{topic}%"))
     rows = query.all()
@@ -553,23 +707,72 @@ def get_resources(topic: Optional[str] = Query(None), db: Session = Depends(get_
 
 
 @app.get("/api/practice", response_model=List[PracticeProblem], tags=["practice"])
-def get_practice(topic: Optional[str] = Query(None), db: Session = Depends(get_db)):
+def get_practice(
+    topic: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """List practice problems. If user_id is provided, scope to current goal and return isCompleted from DB."""
     query = db.query(models.Node)
+    if user_id:
+        row = db.query(models.UserGoal).filter(models.UserGoal.user_id == user_id).first()
+        goal_id = row.goal_id if row else None
+        if goal_id is not None:
+            query = query.filter(models.Node.user_id == user_id, models.Node.goal_id == goal_id)
+        else:
+            query = query.filter(models.Node.user_id == user_id)
     if topic:
         query = query.filter(models.Node.label.ilike(f"%{topic}%"))
     nodes = query.all()
+    completed_set: set[tuple[str, int]] = set()
+    if user_id:
+        for r in db.query(models.UserPracticeCompletion).filter(
+            models.UserPracticeCompletion.user_id == user_id
+        ).all():
+            completed_set.add((r.node_id, r.problem_index))
     problems = []
     problem_id = 1
     for node in nodes:
         for i, problem_text in enumerate(node.practice_problems):
             difficulty = "Easy" if i == 0 else "Medium" if i == 1 else "Hard"
-            problems.append(PracticeProblem(id=str(problem_id), title=problem_text,
+            is_done = (node.id, i) in completed_set
+            problems.append(PracticeProblem(
+                id=str(problem_id),
+                title=problem_text,
                 description=f"Practice exercise for {node.label}: {problem_text}",
-                difficulty=difficulty, topic=node.label,
+                difficulty=difficulty,
+                topic=node.label,
                 hint=f"Think about the core concepts of {node.label}.",
-                expectedOutput="Complete the exercise as described.", isCompleted=False))
+                expectedOutput="Complete the exercise as described.",
+                isCompleted=is_done,
+                node_id=node.id,
+                problem_index=i,
+            ))
             problem_id += 1
     return problems
+
+
+@app.post("/api/practice/complete", tags=["practice"])
+def complete_practice(payload: PracticeCompleteRequest, db: Session = Depends(get_db)):
+    """Record that the user completed a practice problem. Idempotent."""
+    node = db.query(models.Node).filter(models.Node.id == payload.node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if payload.problem_index < 0 or payload.problem_index >= len(node.practice_problems):
+        raise HTTPException(status_code=400, detail="Invalid problem_index")
+    existing = db.query(models.UserPracticeCompletion).filter(
+        models.UserPracticeCompletion.user_id == payload.user_id,
+        models.UserPracticeCompletion.node_id == payload.node_id,
+        models.UserPracticeCompletion.problem_index == payload.problem_index,
+    ).first()
+    if not existing:
+        db.add(models.UserPracticeCompletion(
+            user_id=payload.user_id,
+            node_id=payload.node_id,
+            problem_index=payload.problem_index,
+        ))
+        db.commit()
+    return {"status": "ok", "message": "Practice problem marked complete"}
 
 
 @app.get("/api/snippet/search", tags=["snippets"])

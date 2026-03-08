@@ -1,12 +1,9 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import { KnowledgeGraph } from "@/components/mindmap/knowledge-graph"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Settings2 } from "lucide-react"
 
 const legendItems = [
   { status: "Completed",   color: "bg-success"    },
@@ -17,14 +14,14 @@ const legendItems = [
 ]
 
 export default function MindMapPage() {
-  const router = useRouter()
   const [goal, setGoal] = useState("")
+
   useEffect(() => {
     const userId = localStorage.getItem("hackai_user_id") || "user-1"
     // Always fetch goal from the backend (source of truth) to avoid stale localStorage
     fetch(`http://localhost:8000/api/goal/${userId}`)
-      .then(r => r.json())
-      .then(d => {
+      .then((r) => r.json())
+      .then((d) => {
         const g = d.goal || localStorage.getItem("hackai_goal") || "your topic"
         setGoal(g)
         // Keep localStorage in sync
@@ -32,15 +29,6 @@ export default function MindMapPage() {
       })
       .catch(() => setGoal(localStorage.getItem("hackai_goal") || "your topic"))
   }, [])
-
-  const handleNewTopic = async () => {
-    const userId = localStorage.getItem("hackai_user_id") || "user-1"
-    try {
-      await fetch(`http://localhost:8000/api/graph/${userId}`, { method: "DELETE" })
-    } catch { /* ignore */ }
-    localStorage.removeItem("hackai_goal")
-    router.push("/assessment")
-  }
 
   return (
     <AppShell>
@@ -53,24 +41,18 @@ export default function MindMapPage() {
             <p className="text-muted-foreground">Explore your knowledge graph and discover learning paths</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Card className="shrink-0">
-              <CardContent className="p-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  {legendItems.map((item) => (
-                    <div key={item.status} className="flex items-center gap-2">
-                      <div className={`h-3 w-3 rounded-full ${item.color}`} />
-                      <span className="text-xs text-muted-foreground">{item.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-            <Button variant="outline" onClick={handleNewTopic} className="shrink-0 gap-2">
-              <Settings2 className="h-4 w-4" />
-              New Topic
-            </Button>
-          </div>
+          <Card className="shrink-0">
+            <CardContent className="p-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {legendItems.map((item) => (
+                  <div key={item.status} className="flex items-center gap-2">
+                    <div className={`h-3 w-3 rounded-full ${item.color}`} />
+                    <span className="text-xs text-muted-foreground">{item.status}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <Card className="flex-1 overflow-hidden h-[calc(100%-5rem)]">
