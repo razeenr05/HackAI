@@ -5,11 +5,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: hackai_backend
+    container_name: mapscribe_backend
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://admin:password123@db:5432/hackai_db
+      DATABASE_URL: postgresql://admin:password123@mapscribe_db:5432/mapscribe_db
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GOOGLE_API_KEY: ${GEMINI_API_KEY}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
@@ -19,30 +19,30 @@ services:
       db:
         condition: service_healthy
     networks:
-      - hackai_net
+      - mapscribe_net
 
   db:
     image: postgres:15-alpine
-    container_name: hackai_db
+    container_name: mapscribe_db
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password123
-      POSTGRES_DB: hackai_db
+      POSTGRES_DB: mapscribe_db
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d hackai_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d mapscribe_db"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - hackai_net
+      - mapscribe_net
 
 volumes:
   postgres_data:
 
 networks:
-  hackai_net:
+  mapscribe_net:
     driver: bridge
