@@ -3,6 +3,31 @@ import json
 import urllib.request
 import urllib.error
 
+MAX_VIDEOS_PER_NODE = 7
+MAX_ARTICLES_PER_NODE = 5
+MAX_COURSES_PER_NODE = 3
+
+
+def _cap_resources_per_node(graph: dict) -> None:
+    """Enforce per-node resource limits: 7 videos, 5 articles, 3 courses."""
+    for node in graph.get("nodes", []):
+        resources = node.get("resources", [])
+        if not resources:
+            continue
+        v, a, c, other = [], [], [], []
+        for r in resources:
+            t = (r.get("type") or "").lower()
+            if t == "video":
+                v.append(r)
+            elif t == "article":
+                a.append(r)
+            elif t in ("course", "tutorial"):
+                c.append(r)
+            else:
+                other.append(r)
+        node["resources"] = v[:MAX_VIDEOS_PER_NODE] + a[:MAX_ARTICLES_PER_NODE] + c[:MAX_COURSES_PER_NODE] + other
+
+
 def generate_knowledge_graph(goal: str) -> dict:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -21,7 +46,9 @@ Rules:
 - All nodes start at level 0
 - IDs must be lowercase with hyphens only (e.g. "dribbling-basics")
 - practice_problems should be real exercises the user can do for "{goal}"
-- resource types: Video, Article, Course, Tutorial, Book, Website
+- For resources per node: include ONLY the best-fit resources for learning "{goal}".
+  Maximum per node: 7 Video, 5 Article, 3 Course (or Tutorial). Prefer quality over quantity.
+  Types: Video, Article, Course, Tutorial, Book, Website. Pick the most relevant and educational.
 - Make content SPECIFIC to "{goal}"
 
 Return ONLY valid JSON with no explanation and no markdown code fences:
@@ -37,7 +64,7 @@ Return ONLY valid JSON with no explanation and no markdown code fences:
       "practice_problems": ["exercise 1", "exercise 2", "exercise 3"],
       "related_topics": ["topic1", "topic2"],
       "resources": [
-        {{"title": "resource name", "type": "Video"}}
+        {{"title": "resource name", "type": "Video or Article or Course or Tutorial or Book or Website"}}
       ]
     }}
   ],
@@ -52,12 +79,10 @@ Return ONLY valid JSON with no explanation and no markdown code fences:
         "generationConfig": {"temperature": 0.7}
     }).encode("utf-8")
 
-    # Try models in order until one works
     models = [
+        "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
     ]
 
     last_error = None
@@ -81,7 +106,9 @@ Return ONLY valid JSON with no explanation and no markdown code fences:
                 text = text.split("\n", 1)[1]
             if text.endswith("```"):
                 text = text.rsplit("```", 1)[0]
-            return json.loads(text.strip())
+            graph = json.loads(text.strip())
+            _cap_resources_per_node(graph)
+            return graph
         except urllib.error.HTTPError as e:
             last_error = f"{model} -> {e.code}: {e.read().decode('utf-8')[:200]}"
             continue  # try next model

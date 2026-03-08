@@ -136,19 +136,18 @@ function ResourceCard({ resource }: { resource: Resource }) {
   }
 
   const openExternal = () => {
-    // For non-video resources: open YouTube search for tutorials/courses, Google for articles/books
+    // Link directly to the best match: articles/websites → Google "I'm Feeling Lucky" (first result); courses/tutorials → YouTube
     const titleAndTopic = `${resource.title} ${resource.topic}`
     let url: string
     if (normType === "tutorial" || normType === "course" || normType === "interactive") {
-      // YouTube is best for tutorials and courses
       url = `https://www.youtube.com/results?search_query=${encodeURIComponent(titleAndTopic)}`
     } else if (normType === "article" || normType === "website") {
-      // Google search — user can pick the actual article from results
-      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}`
+      // Open first search result (the article itself) instead of search results page
+      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}&btnI=1`
     } else if (normType === "book") {
-      url = `https://www.google.com/search?q=${encodeURIComponent(resource.title + " free read online")}`
+      url = `https://www.google.com/search?q=${encodeURIComponent(resource.title + " free read online")}&btnI=1`
     } else {
-      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}`
+      url = `https://www.google.com/search?q=${encodeURIComponent(titleAndTopic)}&btnI=1`
     }
     window.open(url, "_blank", "noopener,noreferrer")
   }
@@ -260,7 +259,7 @@ function ResourceCard({ resource }: { resource: Resource }) {
           </Button>
         )}
 
-        {/* NON-VIDEO: open resource externally */}
+        {/* NON-VIDEO: open resource externally — articles/books link to content; courses to YouTube */}
         {!isVideo && (
           <Button className="w-full" variant="outline" onClick={openExternal}>
             <ExternalLink className="mr-2 h-4 w-4" />
@@ -268,7 +267,9 @@ function ResourceCard({ resource }: { resource: Resource }) {
               ? "Find on YouTube ↗"
               : normType === "book"
               ? "Find Book Online ↗"
-              : "Search Google ↗"}
+              : normType === "article" || normType === "website"
+              ? "Open Article ↗"
+              : "Open Link ↗"}
           </Button>
         )}
 
@@ -289,7 +290,8 @@ export default function ResourcesPage() {
   const [selectedTopic, setSelectedTopic] = useState("All")
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/resources")
+    const uid = typeof window !== "undefined" ? (localStorage.getItem("hackai_user_id") || "user-1") : "user-1"
+    fetch(`http://localhost:8000/api/resources?user_id=${encodeURIComponent(uid)}`)
       .then((res) => { if (!res.ok) throw new Error("Failed to load resources"); return res.json() })
       .then((data) => { setResources(data); setLoading(false) })
       .catch((err) => { setError(err.message); setLoading(false) })
