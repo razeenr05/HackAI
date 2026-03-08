@@ -24,14 +24,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
 const navItems = [
   {
+    title: "Dashboard",
+    href: "/",
+    icon: LayoutDashboard,
+  },
+  {
     title: "Learn",
     href: "/learn",
     icon: Sparkles,
-  },
-  {
-    title: "Practice",
-    href: "/practice",
-    icon: BookOpen,
   },
   {
     title: "Mind Map",
@@ -39,9 +39,9 @@ const navItems = [
     icon: Network,
   },
   {
-    title: "Dashboard",
-    href: "/",
-    icon: LayoutDashboard,
+    title: "Practice",
+    href: "/practice",
+    icon: BookOpen,
   },
   {
     title: "Skill Assessment",
