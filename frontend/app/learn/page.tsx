@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { AppShell } from "@/components/app-shell"
 
 const suggestions = [
   "basketball fundamentals",
@@ -61,6 +62,7 @@ export default function LearnPage() {
   }
 
   return (
+    <AppShell>
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-2xl space-y-8">
 
@@ -138,5 +140,6 @@ export default function LearnPage() {
 
       </div>
     </div>
+    </AppShell>
   )
 }

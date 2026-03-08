@@ -324,12 +324,10 @@ def check_unlock(user_id: str, node_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/grade-answer", tags=["practice"])
 def grade_answer(payload: GradeAnswerRequest):
-    import google.generativeai as genai
+    import urllib.request, urllib.error
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
-    genai.configure(api_key=api_key)
-    model_ai = genai.GenerativeModel(os.getenv("LLM_MODEL", "gemini-2.0-flash"))
     prompt = f"""You are an educational AI grading a student's answer.
 
 Topic: {payload.topic}
@@ -345,16 +343,32 @@ Evaluate the answer and respond with ONLY valid JSON (no markdown fences):
 }}
 
 Be fair but accurate. Score above 70 means the student demonstrated understanding."""
-    try:
-        response = model_ai.generate_content(prompt)
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return json.loads(text.strip())
-    except Exception as e:
-        return {"correct": False, "score": 0, "feedback": f"Grading error: {str(e)}", "model_answer": "Unable to grade at this time."}
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.3}
+    }).encode("utf-8")
+    models = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash"]
+    last_err = ""
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        req = urllib.request.Request(url, data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, method="POST")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
+            return json.loads(text.strip())
+        except urllib.error.HTTPError as e:
+            last_err = f"{model}: {e.code}"
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+    return {"correct": False, "score": 0, "feedback": f"Grading temporarily unavailable ({last_err})", "model_answer": "Please try again."}
 
 
 @app.get("/api/dashboard/{user_id}", tags=["dashboard"])
